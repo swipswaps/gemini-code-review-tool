@@ -51,3 +51,48 @@ export async function* reviewCodeStream(code: string, fileName: string): AsyncGe
     throw new Error("Failed to get code review from Gemini API. Please check your API key and network connection.");
   }
 }
+
+export async function lintCode(code: string, fileName: string): Promise<string> {
+  try {
+    const prompt = `
+      You are an expert code linter and formatter, acting like a combination of Prettier and ESLint with auto-fix enabled.
+      Your task is to take the following code from the file named "${fileName}" and automatically fix all formatting, style, and minor convention issues.
+      Do NOT make any logical changes, add features, or perform a detailed review. Your only goal is to clean up the existing code.
+
+      Specifically:
+      - Standardize indentation and spacing.
+      - Enforce consistent code style.
+      - Apply modern syntax where appropriate (e.g., const/let over var).
+      - Remove unnecessary code or comments if they are truly redundant.
+
+      Return ONLY the full, corrected code inside a single markdown code block. Do not add any explanation, preamble, or separator tokens.
+
+      Original code:
+      \`\`\`
+      ${code}
+      \`\`\`
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+    });
+
+    const text = response.text;
+    if (!text) {
+      throw new Error("Received an empty response from the Gemini API.");
+    }
+    
+    const codeMatch = text.match(/```(?:\w+)?\n([\s\S]*?)\n```/);
+    if (codeMatch && codeMatch[1]) {
+      return codeMatch[1].trim();
+    }
+    
+    // Fallback if the model doesn't use a markdown block
+    return text.trim();
+
+  } catch (error) {
+    console.error("Error linting code:", error);
+    throw new Error("Failed to get linted code from Gemini API.");
+  }
+}
