@@ -1,131 +1,164 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import type { ReviewResult } from '../types';
 import { reviewCodeStream } from '../services/geminiService';
 import { DiffViewer } from './DiffViewer';
 import { Spinner } from './Spinner';
-import { WandIcon } from './icons/WandIcon';
-import { InfoIcon } from './icons/InfoIcon';
 import { StreamingResponse } from './StreamingResponse';
+import { PlusCircleIcon } from './icons/PlusCircleIcon';
 
 interface CodeReviewerProps {
-  file: { path: string; content: string } | null;
-  isLoadingFile: boolean;
+  files: { path: string; content: string }[];
+  onReset: () => void;
 }
 
-export const CodeReviewer: React.FC<CodeReviewerProps> = ({ file, isLoadingFile }) => {
-  const [reviewResult, setReviewResult] = useState<ReviewResult | null>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [streamedComments, setStreamedComments] = useState<string>('');
+type ReviewStatus = 'idle' | 'streaming' | 'complete' | 'error';
 
-  useEffect(() => {
-    setReviewResult(null);
-    setError(null);
-    setStreamedComments('');
-  }, [file]);
+interface ReviewState {
+  status: ReviewStatus;
+  streamedComments: string;
+  result: ReviewResult | null;
+  error: string | null;
+}
 
-  const handleReview = useCallback(async () => {
-    if (!file) return;
-    setIsLoading(true);
-    setError(null);
-    setReviewResult(null);
-    setStreamedComments('');
+const ChevronIcon = (props: React.SVGProps<SVGSVGElement>) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+        <path d="m6 9 6 6 6-6"/>
+    </svg>
+);
+
+
+export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) => {
+  const [reviewStates, setReviewStates] = useState<Map<string, ReviewState>>(new Map());
+  const [openFilePath, setOpenFilePath] = useState<string | null>(files.length > 0 ? files[0].path : null);
+
+  const runReview = useCallback(async (file: { path: string; content: string }) => {
+    setReviewStates(prev => new Map(prev).set(file.path, {
+        status: 'streaming',
+        streamedComments: '',
+        result: null,
+        error: null,
+    }));
 
     try {
       const stream = reviewCodeStream(file.content, file.path);
       let fullResponse = '';
       for await (const chunk of stream) {
         fullResponse += chunk;
-        setStreamedComments(fullResponse);
+        setReviewStates(prev => {
+            const newStates = new Map(prev);
+            const currentState = newStates.get(file.path);
+            if (currentState) {
+                newStates.set(file.path, { ...currentState, status: 'streaming', streamedComments: fullResponse });
+            }
+            return newStates;
+        });
       }
 
       const parts = fullResponse.split('<<CODE_SEPARATOR>>');
-      if (parts.length < 2) {
-        throw new Error("Review response format is invalid. The model did not provide a code separator.");
-      }
+      if (parts.length < 2) throw new Error("Review response format is invalid. The model did not provide a code separator.");
       
       const comments = parts[0].trim();
       const correctedCodeRaw = parts.slice(1).join('<<CODE_SEPARATOR>>').trim();
-      
       const codeMatch = correctedCodeRaw.match(/```(?:\w+)?\n([\s\S]*?)\n```/);
       const correctedCode = codeMatch ? codeMatch[1] : correctedCodeRaw;
 
-      setReviewResult({
-        reviewComments: comments,
-        correctedCode: correctedCode.trim(),
-      });
+      setReviewStates(prev => new Map(prev).set(file.path, {
+        status: 'complete',
+        streamedComments: comments,
+        result: { reviewComments: comments, correctedCode: correctedCode.trim() },
+        error: null,
+      }));
 
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred during review.');
-    } finally {
-      setIsLoading(false);
+      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+      setReviewStates(prev => {
+          const newStates = new Map(prev);
+          const currentState = newStates.get(file.path);
+          if (currentState) {
+              newStates.set(file.path, { ...currentState, status: 'error', error: errorMessage });
+          }
+          return newStates;
+      });
     }
-  }, [file]);
+  }, []);
+  
+  useEffect(() => {
+    const initialStates = new Map<string, ReviewState>();
+    files.forEach(file => {
+        initialStates.set(file.path, {
+            status: 'idle',
+            streamedComments: '',
+            result: null,
+            error: null,
+        });
+    });
+    setReviewStates(initialStates);
 
-  const renderContent = () => {
-    if (isLoading) {
-      return <StreamingResponse text={streamedComments} />;
-    }
-    if (reviewResult) {
-      return (
-        <div className="flex-grow flex flex-col gap-4 overflow-hidden">
-            <DiffViewer originalCode={file!.content} correctedCode={reviewResult.correctedCode} />
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-y-auto">
-                <h3 className="text-lg font-semibold p-4 border-b border-gray-700 sticky top-0 bg-gray-800/80 backdrop-blur-sm">Review Comments</h3>
-                <div className="p-4 prose prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-600">
-                  <div style={{ whiteSpace: 'pre-wrap' }}>{reviewResult.reviewComments}</div>
-                </div>
-            </div>
-        </div>
-      );
-    }
-    if(file) {
-      return (
-        <div className="flex-grow bg-gray-900 rounded-lg border border-gray-700 overflow-hidden">
-            <pre className="h-full overflow-auto p-4 text-sm"><code className="language-javascript">{file.content}</code></pre>
-        </div>
-      );
-    }
-    return null; // Should not happen if !file is handled outside
+    files.forEach(file => runReview(file));
+
+  }, [files, runReview]);
+
+  const toggleAccordion = (path: string) => {
+    setOpenFilePath(prev => (prev === path ? null : path));
   };
-
-  if (isLoadingFile) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
-        <Spinner />
-        <p className="mt-4 text-lg">Loading file content...</p>
-      </div>
-    );
-  }
-
-  if (!file) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
-        <InfoIcon className="h-12 w-12 mb-4" />
-        <h2 className="text-xl font-semibold">Select a file to begin</h2>
-        <p>Choose a file from the list on the left to view its content and start a review.</p>
-      </div>
-    );
-  }
+  
+  const getStatusIndicator = (status: ReviewStatus) => {
+    switch(status) {
+        case 'streaming': return <Spinner className="w-4 h-4 text-purple-400" />;
+        case 'complete': return <span className="text-green-400 text-lg font-bold">✓</span>;
+        case 'error': return <span className="text-red-400 text-lg font-bold">✗</span>;
+        case 'idle': return <span className="text-gray-500">...</span>;
+    }
+  };
 
   return (
     <div className="flex flex-col h-full space-y-4">
       <div className="flex-shrink-0 bg-gray-800/50 rounded-lg p-4 border border-gray-700 flex justify-between items-center">
-        <h2 className="text-lg font-semibold text-gray-200 truncate pr-4" title={file.path}>{file.path}</h2>
+        <h2 className="text-lg font-semibold text-gray-200">Reviewing {files.length} file(s)</h2>
         <button
-          onClick={handleReview}
-          disabled={isLoading}
-          className="flex items-center space-x-2 bg-purple-600 text-white font-semibold rounded-md px-4 py-2 hover:bg-purple-700 disabled:bg-purple-800 disabled:cursor-not-allowed transition-colors duration-200"
+          onClick={onReset}
+          className="flex items-center space-x-2 bg-gray-700 text-white font-semibold rounded-md px-4 py-2 hover:bg-gray-600 transition-colors duration-200"
         >
-          {isLoading ? <Spinner className="w-5 h-5" /> : <WandIcon className="w-5 h-5" />}
-          <span>{isLoading ? 'Reviewing...' : 'Review Code'}</span>
+          <PlusCircleIcon className="w-5 h-5" />
+          <span>New Review</span>
         </button>
       </div>
-
-      {error && <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg">{error}</div>}
       
-      {renderContent()}
+      <div className="flex-grow space-y-2 overflow-y-auto pr-2">
+        {files.map(file => {
+          const state = reviewStates.get(file.path);
+          if (!state) return null;
+          const isOpen = openFilePath === file.path;
 
+          return (
+            <div key={file.path} className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden transition-all duration-300">
+                <button onClick={() => toggleAccordion(file.path)} className="w-full flex justify-between items-center p-4 text-left hover:bg-gray-700/50">
+                    <div className="flex items-center gap-3 truncate">
+                        {getStatusIndicator(state.status)}
+                        <span className="font-medium text-gray-300 truncate" title={file.path}>{file.path}</span>
+                    </div>
+                    <ChevronIcon className={`w-5 h-5 transition-transform flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {isOpen && (
+                    <div className="p-4 border-t border-gray-700 bg-gray-900/50">
+                        {state.status === 'streaming' && <StreamingResponse text={state.streamedComments} />}
+                        {state.status === 'complete' && state.result && (
+                             <div className="flex flex-col gap-4">
+                                <DiffViewer originalCode={file.content} correctedCode={state.result.correctedCode} />
+                                <div className="bg-gray-800 rounded-lg border border-gray-700 max-h-96 overflow-y-auto">
+                                    <h3 className="text-md font-semibold p-3 border-b border-gray-700 sticky top-0 bg-gray-800/80 backdrop-blur-sm">Review Comments</h3>
+                                    <div className="p-4 prose prose-invert max-w-none prose-pre:bg-gray-900" dangerouslySetInnerHTML={{ __html: state.result.reviewComments.replace(/\n/g, '<br />') }} />
+                                </div>
+                            </div>
+                        )}
+                        {state.status === 'error' && <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg">{state.error}</div>}
+                    </div>
+                )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   );
 };
