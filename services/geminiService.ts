@@ -1,6 +1,4 @@
-
-import { GoogleGenAI, Type } from "@google/genai";
-import type { ReviewResult } from '../types';
+import { GoogleGenAI } from "@google/genai";
 
 const API_KEY = process.env.API_KEY;
 
@@ -10,22 +8,8 @@ if (!API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
-const reviewSchema = {
-  type: Type.OBJECT,
-  properties: {
-    reviewComments: {
-      type: Type.STRING,
-      description: "A detailed, markdown-formatted review of the code. Explain the issues found (e.g., bugs, performance, style, best practices) and the reasoning behind the corrections.",
-    },
-    correctedCode: {
-      type: Type.STRING,
-      description: "The full, corrected version of the provided code snippet, ready to be used as a replacement.",
-    },
-  },
-  required: ["reviewComments", "correctedCode"],
-};
 
-export async function reviewCode(code: string, fileName: string): Promise<ReviewResult> {
+export async function* reviewCodeStream(code: string, fileName: string): AsyncGenerator<string> {
   try {
     const prompt = `
       You are an expert senior software engineer and code reviewer.
@@ -39,33 +23,28 @@ export async function reviewCode(code: string, fileName: string): Promise<Review
       - Security vulnerabilities
       - Type safety (if applicable, e.g., TypeScript)
 
-      Provide a corrected, complete version of the file and a summary of your review.
-      The corrected code should be a drop-in replacement for the original file content.
-      The review comments should be in Markdown format.
+      First, stream a detailed, markdown-formatted review of the code. Explain the issues you find and the reasoning behind your proposed corrections.
+      
+      After you have finished writing all the review comments, add a separator token "<<CODE_SEPARATOR>>" on a new line by itself.
 
-      Here is the code:
+      Finally, after the separator, provide the full, corrected version of the code snippet in a markdown code block. This corrected code should be a drop-in replacement for the original file content.
+      
+      Here is the code to review:
       \`\`\`
       ${code}
       \`\`\`
     `;
 
-    const response = await ai.models.generateContent({
+    const responseStream = await ai.models.generateContentStream({
       model: "gemini-2.5-pro",
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: reviewSchema,
-      },
     });
     
-    const jsonText = response.text.trim();
-    const result = JSON.parse(jsonText) as ReviewResult;
-
-    if (!result.correctedCode || !result.reviewComments) {
-        throw new Error("Invalid response format from API.");
+    for await (const chunk of responseStream) {
+        if (chunk.text) {
+            yield chunk.text;
+        }
     }
-    
-    return result;
 
   } catch (error) {
     console.error("Error reviewing code:", error);
