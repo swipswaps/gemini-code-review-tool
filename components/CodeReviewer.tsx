@@ -72,7 +72,9 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ file, isLoadingFile 
             <DiffViewer originalCode={file!.content} correctedCode={reviewResult.correctedCode} />
             <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-y-auto">
                 <h3 className="text-lg font-semibold p-4 border-b border-gray-700 sticky top-0 bg-gray-800/80 backdrop-blur-sm">Review Comments</h3>
-                <div className="p-4 prose prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-600" dangerouslySetInnerHTML={{ __html: reviewResult.reviewComments.replace(/\n/g, '<br />') }}></div>
+                <div className="p-4 prose prose-invert max-w-none prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-600">
+                  <div style={{ whiteSpace: 'pre-wrap' }}>{reviewResult.reviewComments}</div>
+                </div>
             </div>
         </div>
       );
