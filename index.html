@@ -6,6 +6,47 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Gemini Code Reviewer</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          typography: ({ theme }) => ({
+            DEFAULT: {
+              css: {
+                // Add custom styles for span elements within prose
+                'span[data-lines]': {
+                  cursor: 'pointer',
+                  backgroundColor: theme('colors.purple.600 / 0.3'),
+                  color: theme('colors.purple.300'),
+                  fontFamily: theme('fontFamily.mono').join(', '),
+                  padding: '0.25rem 0.375rem',
+                  borderRadius: '0.375rem',
+                  margin: '0 0.25rem',
+                  transitionProperty: 'color, background-color',
+                  transitionDuration: '150ms',
+                  '&:hover': {
+                    backgroundColor: theme('colors.purple.600 / 0.5'),
+                  },
+                },
+              },
+            },
+          }),
+          keyframes: {
+             'pulse-once': {
+              '0%, 100%': { transform: 'scale(1)', opacity: '1' },
+              '50%': { transform: 'scale(1.01)', opacity: '0.9' },
+            }
+          },
+          animation: {
+            'pulse-once': 'pulse-once 0.5s ease-in-out',
+          }
+        },
+      },
+       plugins: [
+        require('@tailwindcss/typography'),
+      ],
+    }
+  </script>
   <script type="importmap">
 {
   "imports": {

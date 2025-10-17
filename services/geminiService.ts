@@ -24,6 +24,7 @@ export async function* reviewCodeStream(code: string, fileName: string): AsyncGe
       - Type safety (if applicable, e.g., TypeScript)
 
       First, stream a detailed, markdown-formatted review of the code. Explain the issues you find and the reasoning behind your proposed corrections.
+      For each distinct issue, reference the relevant line number(s) from the original code by wrapping them in a special HTML tag, for example: <span data-lines="15-18">L15-18</span>. This is critical for the UI to highlight the code.
       
       After you have finished writing all the review comments, add a separator token "<<CODE_SEPARATOR>>" on a new line by itself.
 

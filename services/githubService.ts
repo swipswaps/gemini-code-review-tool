@@ -1,4 +1,5 @@
-import type { RepoFile } from '../types';
+
+import type { RepoTreeNode, RepoTreeFolder, RepoTreeFile } from '../types';
 
 const API_BASE = 'https://api.github.com';
 
@@ -19,22 +20,54 @@ const parseGitHubUrl = (url: string): { owner: string; repo: string } | null => 
   }
 };
 
-const ALLOWED_EXTENSIONS = new Set([
-  '.js', '.jsx', '.ts', '.tsx', '.py', '.rb', '.go', '.java', '.cs',
-  '.php', '.html', '.css', '.scss', '.json', '.yml', '.yaml', '.md',
-  '.sh', 'Dockerfile', '.env'
-]);
+const buildTree = (files: { path: string }[]): RepoTreeNode[] => {
+  const root: RepoTreeFolder = { type: 'folder', name: 'root', path: '', children: [] };
+  
+  files.forEach(file => {
+    let currentNode = root;
+    const parts = file.path.split('/');
+    parts.forEach((part, index) => {
+      const isFile = index === parts.length - 1;
+      let childNode = currentNode.children.find(c => c.name === part);
 
-const hasAllowedExtension = (path: string): boolean => {
-  if (ALLOWED_EXTENSIONS.has(path)) return true; // for files like "Dockerfile"
-  const lastDot = path.lastIndexOf('.');
-  if (lastDot === -1) return false;
-  const ext = path.substring(lastDot);
-  return ALLOWED_EXTENSIONS.has(ext.toLowerCase());
+      if (!childNode) {
+        if (isFile) {
+          const newFile: RepoTreeFile = { type: 'file', path: file.path, name: part };
+          currentNode.children.push(newFile);
+        } else {
+          const folderPath = parts.slice(0, index + 1).join('/');
+          const newFolder: RepoTreeFolder = { type: 'folder', path: folderPath, name: part, children: [] };
+          currentNode.children.push(newFolder);
+          childNode = newFolder;
+        }
+      }
+      
+      if (childNode && childNode.type === 'folder') {
+        currentNode = childNode;
+      }
+    });
+  });
+
+  const sortChildren = (node: RepoTreeFolder) => {
+    node.children.sort((a, b) => {
+        if (a.type === 'folder' && b.type === 'file') return -1;
+        if (a.type === 'file' && b.type === 'folder') return 1;
+        return a.name.localeCompare(b.name);
+    });
+    node.children.forEach(child => {
+        if (child.type === 'folder') {
+            sortChildren(child);
+        }
+    });
+  };
+
+  sortChildren(root);
+  return root.children;
 };
 
+
 // Fetches the file tree for a repository
-export const fetchRepoFiles = async (repoUrl: string): Promise<RepoFile[]> => {
+export const fetchRepoTree = async (repoUrl: string): Promise<RepoTreeNode[]> => {
   const parsed = parseGitHubUrl(repoUrl);
   if (!parsed) {
     throw new Error('Invalid GitHub repository URL.');
@@ -59,15 +92,15 @@ export const fetchRepoFiles = async (repoUrl: string): Promise<RepoFile[]> => {
     console.warn("Warning: The file tree is too large and has been truncated by the GitHub API. Not all files may be shown.");
   }
 
-  const files: RepoFile[] = treeData.tree
-    .filter((item: any) => item.type === 'blob' && hasAllowedExtension(item.path))
+  const files: { path: string }[] = treeData.tree
+    .filter((item: any) => item.type === 'blob')
     .map((item: any) => ({ path: item.path }));
 
   if (files.length === 0) {
     console.log("No reviewable files found in the repository.");
   }
   
-  return files;
+  return buildTree(files);
 };
 
 // Fetches the content of a single file

@@ -1,7 +1,7 @@
 
 import React, { useState, useCallback } from 'react';
-import type { RepoFile } from './types';
-import { fetchRepoFiles, fetchFileContent } from './services/githubService';
+import type { RepoTreeNode } from './types';
+import { fetchRepoTree, fetchFileContent } from './services/githubService';
 import { RepoInput } from './components/RepoInput';
 import { FileBrowser } from './components/FileBrowser';
 import { CodeReviewer } from './components/CodeReviewer';
@@ -23,7 +23,7 @@ const parseGitHubUrl = (url: string): { owner: string; repo: string } | null => 
 
 export default function App(): React.ReactElement {
   const [repoUrl, setRepoUrl] = useState<string>('https://github.com/microsoft/TypeScript-Node-Starter');
-  const [files, setFiles] = useState<RepoFile[]>([]);
+  const [files, setFiles] = useState<RepoTreeNode[]>([]);
   const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(new Set());
   const [filesForReview, setFilesForReview] = useState<{ path: string; content: string }[] | null>(null);
   
@@ -42,10 +42,10 @@ export default function App(): React.ReactElement {
     setSelectedFilePaths(new Set());
     setFiles([]);
     try {
-      const fetchedFiles = await fetchRepoFiles(repoUrl);
-      setFiles(fetchedFiles);
-       if (fetchedFiles.length === 0) {
-        setError('No reviewable files found in this repository. Check the console for more details.');
+      const fetchedTree = await fetchRepoTree(repoUrl);
+      setFiles(fetchedTree);
+       if (fetchedTree.length === 0) {
+        setError('No files found in this repository. Check the console for more details.');
       }
     } catch (err)
  {
@@ -130,7 +130,7 @@ export default function App(): React.ReactElement {
                 <Spinner />
               </div>
             ) : files.length > 0 ? (
-              <FileBrowser files={files} selectedFilePaths={selectedFilePaths} onToggleFile={handleToggleFileSelection} />
+              <FileBrowser nodes={files} selectedFilePaths={selectedFilePaths} onToggleFile={handleToggleFileSelection} />
             ) : (
                <div className="p-4 text-center text-gray-500 flex-grow flex items-center justify-center">{error || 'Enter a repository URL and click "Fetch Files" to begin.'}</div>
             )}

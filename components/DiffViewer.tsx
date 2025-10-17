@@ -1,42 +1,91 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { diffLines, type Change } from 'diff';
 
 interface DiffViewerProps {
   originalCode: string;
   correctedCode: string;
+  highlightedLines: Set<number> | null;
 }
 
-export const DiffViewer: React.FC<DiffViewerProps> = ({ originalCode, correctedCode }) => {
-  const diffs = diffLines(originalCode, correctedCode);
+type DiffLine = {
+  content: string;
+  lineNumber?: number;
+  type: 'add' | 'remove' | 'equal' | 'placeholder';
+};
 
-  const renderPart = (part: Change, index: number) => {
-    const colorClass = part.added ? 'bg-green-800/30' : part.removed ? 'bg-red-800/30' : '';
-    const prefix = part.added ? '+' : part.removed ? '-' : ' ';
-    const prefixColor = part.added ? 'text-green-400' : part.removed ? 'text-red-400' : 'text-gray-500';
+const processDiff = (originalCode: string, correctedCode: string): { left: DiffLine[], right: DiffLine[] } => {
+    const diffs = diffLines(originalCode, correctedCode);
+    const left: DiffLine[] = [];
+    const right: DiffLine[] = [];
+    let leftLineNum = 1;
+    let rightLineNum = 1;
+
+    diffs.forEach((part: Change) => {
+        const lines = part.value.replace(/\n$/, '').split('\n');
+        
+        if (part.added) {
+            lines.forEach(line => {
+                left.push({ type: 'placeholder', content: '' });
+                right.push({ type: 'add', content: line, lineNumber: rightLineNum++ });
+            });
+        } else if (part.removed) {
+            lines.forEach(line => {
+                left.push({ type: 'remove', content: line, lineNumber: leftLineNum++ });
+                right.push({ type: 'placeholder', content: '' });
+            });
+        } else {
+            lines.forEach(line => {
+                left.push({ type: 'equal', content: line, lineNumber: leftLineNum++ });
+                right.push({ type: 'equal', content: line, lineNumber: rightLineNum++ });
+            });
+        }
+    });
+
+    return { left, right };
+};
+
+
+export const DiffViewer: React.FC<DiffViewerProps> = ({ originalCode, correctedCode, highlightedLines }) => {
+    const { left: leftLines, right: rightLines } = useMemo(() => processDiff(originalCode, correctedCode), [originalCode, correctedCode]);
     
-    // Split into lines, handling potential trailing newline
-    const lines = part.value.endsWith('\n') ? part.value.slice(0, -1).split('\n') : part.value.split('\n');
+    const renderPanel = (lines: DiffLine[], isLeftPanel: boolean) => (
+        <div className="w-1/2 overflow-auto font-mono text-sm bg-gray-900">
+            <pre className="p-4">
+                {lines.map((line, index) => {
+                    let bgClass = '';
+                    let highlightClass = '';
+                    
+                    if (line.type === 'add') bgClass = 'bg-green-800/30';
+                    if (line.type === 'remove') bgClass = 'bg-red-800/30';
+                    
+                    if (isLeftPanel && line.lineNumber && highlightedLines?.has(line.lineNumber)) {
+                       highlightClass = 'bg-purple-600/40 border-l-2 border-purple-400';
+                    }
 
-    return (
-        <React.Fragment key={index}>
-            {lines.map((line, lineIndex) => (
-                <div key={lineIndex} className={`flex text-gray-300 ${colorClass}`}>
-                    <span className={`w-8 text-center select-none ${prefixColor}`}>{prefix}</span>
-                    <span className="flex-grow pr-4">{line || ' '}</span>
-                </div>
-            ))}
-        </React.Fragment>
+                    return (
+                        <div key={index} className={`flex ${bgClass} ${highlightClass} transition-colors duration-300`}>
+                            <span className="w-10 text-right pr-4 select-none text-gray-500">
+                                {line.lineNumber || ' '}
+                            </span>
+                            <span className="flex-grow pr-4 text-gray-300">{line.content || ' '}</span>
+                        </div>
+                    );
+                })}
+            </pre>
+        </div>
     );
-  };
-
+    
   return (
-    <div className="flex flex-col gap-4 h-96">
-      <div className="w-full flex flex-col bg-gray-900/70 rounded-lg border border-gray-700 overflow-hidden">
-        <h3 className="text-md font-semibold p-3 bg-gray-800/80 border-b border-gray-700 flex-shrink-0">Code Diff</h3>
-        <div className="overflow-auto flex-grow font-mono text-sm">
-          <pre className="p-4">
-              {diffs.map(renderPart)}
-          </pre>
+    <div className="flex flex-col gap-4 h-[50vh] min-h-96 diff-viewer-container">
+      <div className="w-full flex flex-col bg-gray-900/70 rounded-lg border border-gray-700 overflow-hidden h-full">
+        <div className="flex-shrink-0 text-md font-semibold p-3 bg-gray-800/80 border-b border-gray-700 flex">
+            <div className="w-1/2">Original</div>
+            <div className="w-1/2">Corrected</div>
+        </div>
+        <div className="flex flex-grow min-h-0">
+            {renderPanel(leftLines, true)}
+            <div className="w-px bg-gray-700 flex-shrink-0"></div>
+            {renderPanel(rightLines, false)}
         </div>
       </div>
     </div>

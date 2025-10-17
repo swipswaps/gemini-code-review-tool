@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReviewResult } from '../types';
 import { reviewCodeStream, lintCode } from '../services/geminiService';
 import { DiffViewer } from './DiffViewer';
@@ -24,7 +24,7 @@ interface ReviewState {
 }
 
 const ChevronIcon = (props: React.SVGProps<SVGSVGElement>) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
         <path d="m6 9 6 6 6-6"/>
     </svg>
 );
@@ -33,6 +33,8 @@ const ChevronIcon = (props: React.SVGProps<SVGSVGElement>) => (
 export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) => {
   const [reviewStates, setReviewStates] = useState<Map<string, ReviewState>>(new Map());
   const [openFilePath, setOpenFilePath] = useState<string | null>(files.length > 0 ? files[0].path : null);
+  const [highlightedLines, setHighlightedLines] = useState<Set<number> | null>(null);
+  const commentsRef = useRef<HTMLDivElement>(null);
 
   const runReview = useCallback(async (file: { path: string; content: string }) => {
     setReviewStates(prev => new Map(prev).set(file.path, {
@@ -143,9 +145,52 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
     files.forEach(file => runReview(file));
 
   }, [files, runReview]);
+  
+  // Effect for handling clicks on line number references in comments
+  useEffect(() => {
+    const currentRef = commentsRef.current;
+    if (!currentRef) return;
+    
+    const handleClick = (e: MouseEvent) => {
+        const target = e.target as HTMLElement;
+        const span = target.closest('span[data-lines]');
+        
+        if (span) {
+            const linesAttr = span.getAttribute('data-lines');
+            if (linesAttr) {
+                const [startStr, endStr] = linesAttr.split('-');
+                const start = parseInt(startStr, 10);
+                const end = endStr ? parseInt(endStr, 10) : start;
+
+                if (!isNaN(start)) {
+                    const lines = new Set<number>();
+                    for (let i = start; i <= end; i++) {
+                        lines.add(i);
+                    }
+                    setHighlightedLines(lines);
+                    
+                    // Add a small visual pulse to the diff viewer
+                    const diffViewer = (e.target as HTMLElement).closest('.p-4.border-t')?.querySelector('.diff-viewer-container');
+                    if (diffViewer) {
+                        diffViewer.classList.add('animate-pulse-once');
+                        setTimeout(() => diffViewer.classList.remove('animate-pulse-once'), 500);
+                    }
+                }
+            }
+        }
+    };
+    
+    currentRef.addEventListener('click', handleClick);
+    
+    return () => {
+        currentRef.removeEventListener('click', handleClick);
+    };
+  }, [reviewStates, openFilePath]);
+
 
   const toggleAccordion = (path: string) => {
     setOpenFilePath(prev => (prev === path ? null : path));
+    setHighlightedLines(null); // Clear highlights when toggling accordion
   };
   
   const getStatusIndicator = (status: ReviewStatus) => {
@@ -190,7 +235,11 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
                         {state.status === 'streaming' && <StreamingResponse text={state.streamedComments} />}
                         {state.status === 'complete' && state.result && (
                              <div className="flex flex-col gap-4">
-                                <DiffViewer originalCode={file.content} correctedCode={state.result.correctedCode} />
+                                <DiffViewer 
+                                  originalCode={file.content} 
+                                  correctedCode={state.result.correctedCode} 
+                                  highlightedLines={highlightedLines} 
+                                />
                                 
                                 <div className="flex justify-end border-b border-gray-700 pb-4">
                                     <button
@@ -209,7 +258,11 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
 
                                 <div className="bg-gray-800 rounded-lg border border-gray-700 max-h-96 overflow-y-auto">
                                     <h3 className="text-md font-semibold p-3 border-b border-gray-700 sticky top-0 bg-gray-800/80 backdrop-blur-sm">Review Comments</h3>
-                                    <div className="p-4 prose prose-invert max-w-none prose-pre:bg-gray-900" dangerouslySetInnerHTML={{ __html: state.result.reviewComments.replace(/\n/g, '<br />') }} />
+                                    <div 
+                                      ref={commentsRef} 
+                                      className="p-4 prose prose-invert max-w-none prose-pre:bg-gray-900 prose-span:cursor-pointer prose-span:bg-purple-600/30 prose-span:hover:bg-purple-600/50 prose-span:text-purple-300 prose-span:font-mono prose-span:px-1.5 prose-span:py-0.5 prose-span:rounded-md prose-span:mx-1 prose-span:transition-colors"
+                                      dangerouslySetInnerHTML={{ __html: state.result.reviewComments }} 
+                                    />
                                 </div>
                             </div>
                         )}
