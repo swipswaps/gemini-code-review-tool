@@ -1,5 +1,4 @@
-
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import type { RepoTreeNode } from './types';
 import { fetchRepoTree, fetchFileContent } from './services/githubService';
 import { RepoInput } from './components/RepoInput';
@@ -31,30 +30,45 @@ export default function App(): React.ReactElement {
   const [isFetchingContent, setIsFetchingContent] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleFetchFiles = useCallback(async () => {
-    if (!repoUrl) {
-      setError('Please enter a GitHub repository URL.');
+  const handleFetchFiles = useCallback(async (urlToFetch: string) => {
+    const parsed = parseGitHubUrl(urlToFetch);
+    if (!parsed) {
+      setError('Please enter a valid GitHub repository URL.');
       return;
     }
+    
     setIsLoadingRepo(true);
     setError(null);
     setFilesForReview(null);
     setSelectedFilePaths(new Set());
     setFiles([]);
+
     try {
-      const fetchedTree = await fetchRepoTree(repoUrl);
+      const fetchedTree = await fetchRepoTree(urlToFetch);
       setFiles(fetchedTree);
        if (fetchedTree.length === 0) {
         setError('No files found in this repository. Check the console for more details.');
       }
-    } catch (err)
- {
+    } catch (err) {
       setError(err instanceof Error ? err.message : 'An unknown error occurred.');
       setFiles([]);
     } finally {
       setIsLoadingRepo(false);
     }
-  }, [repoUrl]);
+  }, []);
+
+  // Effect to automatically fetch files when repoUrl changes (with debounce)
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      if (repoUrl && parseGitHubUrl(repoUrl)) {
+        handleFetchFiles(repoUrl);
+      }
+    }, 500); // 500ms debounce delay
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [repoUrl, handleFetchFiles]);
   
   const handleToggleFileSelection = useCallback((path: string) => {
     setSelectedFilePaths(prev => {
@@ -120,7 +134,6 @@ export default function App(): React.ReactElement {
           <RepoInput
             repoUrl={repoUrl}
             setRepoUrl={setRepoUrl}
-            onFetch={handleFetchFiles}
             isLoading={isLoadingRepo}
           />
           <div className="bg-gray-800/50 rounded-lg border border-gray-700 flex flex-col flex-grow min-h-0">
@@ -132,7 +145,7 @@ export default function App(): React.ReactElement {
             ) : files.length > 0 ? (
               <FileBrowser nodes={files} selectedFilePaths={selectedFilePaths} onToggleFile={handleToggleFileSelection} />
             ) : (
-               <div className="p-4 text-center text-gray-500 flex-grow flex items-center justify-center">{error || 'Enter a repository URL and click "Fetch Files" to begin.'}</div>
+               <div className="p-4 text-center text-gray-500 flex-grow flex items-center justify-center">{error || 'Enter a repository URL to begin.'}</div>
             )}
              {files.length > 0 && (
                 <div className="p-4 border-t border-gray-700 flex-shrink-0 bg-gray-900/50 rounded-b-lg">
