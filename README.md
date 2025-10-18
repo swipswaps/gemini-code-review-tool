@@ -5,11 +5,12 @@ An automated code review tool that uses the Gemini API to analyze files from pub
 ## Key Features
 
 - **Direct GitHub Integration:** Fetches and displays files directly from any public GitHub repository using the GitHub REST API.
+- **Multi-File Review & Formatting:** Select multiple files for a batch review, with each file's results displayed in a convenient accordion view. Includes a one-click "Auto-Fix & Format" feature for quick cleanups.
 - **AI-Powered Code Analysis:** Leverages the advanced reasoning of the Gemini 2.5 Pro model to perform in-depth code reviews, checking for bugs, performance issues, security vulnerabilities, and adherence to best practices.
-- **Real-Time Streaming Feedback:** Provides a live, streaming view of the AI's "thought process" as it analyzes the code, offering superior user experience and transparency compared to a simple loading spinner.
-- **Visual Diff Viewer:** Renders suggested corrections in a clean, unified diff format—similar to `git diff`—with intuitive color-coding for added and removed lines, making it easy to understand the proposed changes.
-- **Modern & Responsive UI:** Built with React, TypeScript, and Tailwind CSS for a clean, performant, and responsive user experience that works across devices.
-- **Broad Language Support:** Capable of reviewing a wide range of common programming languages and configuration file types, thanks to a configurable file extension filter.
+- **Interactive Feedback:** Review comments are interactive. Click on a line number reference (e.g., `L15-18`) in a comment, and the corresponding lines of code will instantly be highlighted in the diff viewer above.
+- **Seamless Streaming Experience:** Provides a live, streaming view of the AI's "thought process" within a persistent UI, offering a superior and more transparent user experience than a simple loading spinner.
+- **Side-by-Side Diff Viewer:** Renders suggested corrections in a clean, side-by-side diff format with line numbers and intuitive color-coding, making it easy to understand the proposed changes.
+- **Modern & Resilient UI:** Built with React, TypeScript, and Tailwind CSS for a clean, performant, and responsive user experience. Includes error boundaries to gracefully handle runtime errors without crashing the application.
 
 ## How It Works: A Deep Dive
 
@@ -17,41 +18,31 @@ The application is a client-side React application that orchestrates two main ex
 
 ### 1. Fetching Repository Files (`services/githubService.ts`)
 
-When a user enters a GitHub repository URL and clicks "Fetch Files," the application initiates a multi-step process to retrieve the file tree:
+When a user enters a GitHub repository URL, the application automatically initiates a debounced fetch process:
 
-1.  **URL Parsing:** The provided URL is parsed to extract the repository `owner` and `repo` name.
-2.  **Default Branch Discovery:** An initial, unauthenticated request is made to the GitHub REST API endpoint (`/repos/{owner}/{repo}`) to get the repository's metadata, which includes the name of its `default_branch`.
-3.  **Recursive Tree Fetch:** A second request is made to the Git Trees API endpoint (`/repos/{owner}/{repo}/git/trees/{default_branch}?recursive=1`). The `recursive=1` query parameter is crucial, as it fetches the entire file structure of the repository in a single API call, avoiding the need to traverse directories one by one.
-4.  **File Filtering:** The response, which contains a list of all files and directories, is filtered to include only files (`type: 'blob'`). Each file's path is checked against a predefined set of allowed extensions (`ALLOWED_EXTENSIONS`) to ensure only reviewable, text-based files are shown to the user.
-5.  **Content Fetching:** When a user clicks on a file in the browser, a final API call is made to the Contents API endpoint (`/repos/{owner}/{repo}/contents/{path}`). This endpoint returns the file's content as a base64-encoded string, which the application then decodes into plain text using `atob()` for display and analysis.
+1.  **URL Parsing & Tree Construction:** The URL is parsed to extract the `owner` and `repo`. The application fetches the entire file list using the GitHub Git Trees API (`?recursive=1`), then intelligently constructs a hierarchical folder and file tree from the flat list of paths.
+2.  **File Content Fetching:** When a user starts a review, a request is made to the Contents API endpoint (`/repos/{owner}/{repo}/contents/{path}`) for each selected file. This endpoint returns the file's content as a base64-encoded string, which the application decodes (`atob()`) into plain text for analysis. The process uses `Promise.allSettled` to handle errors gracefully, so one failed file won't stop an entire batch review.
 
 ### 2. AI-Powered Analysis (`services/geminiService.ts`)
 
 The core of the application lies in its interaction with the Gemini API.
 
-1.  **Prompt Engineering:** When the "Review Code" button is clicked, the selected file's content and path are embedded into a carefully crafted prompt. This prompt instructs the Gemini model to assume the persona of an **expert senior software engineer**. It provides a clear set of criteria for the review, including bugs, performance, best practices, security, and style.
-2.  **Streaming for Real-Time Feedback:** The application uses the `gemini-2.5-pro` model via the `@google/genai` SDK's `generateContentStream` method. This is a key feature, as it allows the app to receive the model's response in chunks as it's being generated, rather than waiting for the entire review to complete.
+1.  **Prompt Engineering:** The file's content and path are embedded into a carefully crafted prompt. This prompt instructs the Gemini model to act as an **expert senior software engineer** and provides clear criteria for the review. Crucially, it asks the model to wrap any line number references in a special HTML tag (e.g., `<span data-lines="15-18">L15-18</span>`) to make its output machine-readable for the interactive highlighting feature.
+2.  **Streaming for Real-Time Feedback:** The app uses the `gemini-2.5-pro` model's streaming capabilities (`generateContentStream`). This allows the app to receive the model's response in chunks as it's generated, rather than waiting for the entire review to complete.
 3.  **Structured Output:** The prompt explicitly asks the model to structure its output in two parts, separated by a unique token (`<<CODE_SEPARATOR>>`):
-    *   **Part 1: Review Comments:** A detailed, markdown-formatted explanation of the identified issues and the reasoning behind the suggested fixes.
-    *   **Part 2: Corrected Code:** The full, corrected version of the code, formatted in a markdown code block. This ensures the output can be programmatically parsed.
+    *   **Part 1: Review Comments:** A detailed, markdown-formatted explanation of the identified issues.
+    *   **Part 2: Corrected Code:** The full, corrected version of the code.
 
 ### 3. The Code Review Lifecycle (`components/CodeReviewer.tsx`)
 
-This component acts as the central hub for the user's interaction with a selected file. It manages the entire review lifecycle through its state:
+This component manages the multi-file review lifecycle in an accordion interface.
 
--   **Initial State:** Displays the content of the selected file in a `<pre>` block.
--   **Review in Progress:** When the review is initiated, the view switches to the `StreamingResponse` component. This component receives the stream of text from the Gemini API and renders it in real-time, along with a blinking cursor, giving the user immediate feedback that the analysis is underway.
--   **Review Complete:** Once the stream ends, `CodeReviewer.tsx` processes the complete response. It splits the text at the `<<CODE_SEPARATOR>>` token to separate the comments from the corrected code. It then passes this data to the `DiffViewer` and displays the markdown comments below it. Error handling is also managed here, displaying any issues that occur during the API call.
+-   **Review in Progress:** When a review is initiated, the main view locks into a consistent layout. For each file, a **Review Comments** panel appears, showing the AI's "thought process" streaming in real-time, providing immediate feedback. Above it, a **Diff Viewer** shows the original code.
+-   **Review Complete:** Once the stream for a file ends, the UI smoothly transitions. The **Review Comments** panel formats the streamed text into readable, structured markdown using the `marked` library. The **Diff Viewer** updates to show a side-by-side comparison of the original code and the AI's corrected version. This persistent layout avoids jarring UI shifts and keeps the context visible throughout the review.
 
 ### 4. Displaying the Results (`components/DiffViewer.tsx`)
 
-To present the code changes clearly, the `DiffViewer` component performs a line-by-line comparison:
-
--   It uses the `diff` library's `diffLines` function to compare the original and corrected code snippets.
--   The function returns an array of "change objects," where each object represents a block of added, removed, or unchanged lines.
--   The component maps over this array, rendering each line with:
-    -   A `+` or `-` prefix.
-    -   A distinct background color (green for additions, red for removals) to provide an immediate, scannable visual representation of the proposed changes.
+To present the code changes clearly, the `DiffViewer` component performs a line-by-line comparison using the `diff` library. It renders two panels, "Original" and "Corrected," with line numbers. It intelligently adds blank lines to ensure that corresponding code blocks remain aligned, and it highlights lines in green (additions) or red (removals) for an intuitive visual representation.
 
 ## Project Structure
 
@@ -59,24 +50,25 @@ The project is organized into a logical structure to separate concerns.
 
 ```
 /
-├── components/          # Reusable React components
-│   ├── icons/           # SVG icon components
-│   ├── CodeReviewer.tsx   # Main component for displaying code and review results
-│   ├── DiffViewer.tsx     # Component for showing code differences
-│   ├── FileBrowser.tsx    # Component for listing repository files
-│   ├── RepoInput.tsx      # Component for GitHub URL input
-│   ├── Spinner.tsx        # Loading spinner component
-│   └── StreamingResponse.tsx # Component for displaying streaming text
+├── components/            # Reusable React components
+│   ├── icons/             # SVG icon components
+│   ├── CodeReviewer.tsx     # Main component for managing the multi-file review accordion
+│   ├── DiffViewer.tsx       # Component for showing side-by-side code differences
+│   ├── ErrorBoundary.tsx    # Catches runtime errors to prevent app crashes
+│   ├── FileBrowser.tsx      # Renders the interactive repository file tree
+│   ├── RepoInput.tsx        # Component for GitHub URL input
+│   ├── ReviewComments.tsx   # Displays streaming thought process and final formatted review
+│   └── Spinner.tsx          # Loading spinner component
 │
-├── services/            # Modules for interacting with external APIs
-│   ├── geminiService.ts   # Logic for calling the Gemini API
-│   └── githubService.ts   # Logic for calling the GitHub API
+├── services/              # Modules for interacting with external APIs
+│   ├── geminiService.ts     # Logic for calling the Gemini API
+│   └── githubService.ts     # Logic for calling the GitHub API
 │
-├── App.tsx              # Main application component, manages state
-├── index.html           # The entry point HTML file
-├── index.tsx            # React application root
-├── types.ts             # TypeScript type definitions for the project
-└── README.md            # You are here!
+├── App.tsx                # Main application component, manages state
+├── index.html             # The entry point HTML file
+├── index.tsx              # React application root
+├── types.ts               # TypeScript type definitions for the project
+└── README.md              # You are here!
 ```
 
 ## Installation and Setup Guide
@@ -154,11 +146,14 @@ export default defineConfig(({ mode }) => {
 
 ## User Guide
 
-1.  **Enter Repository URL:** In the input box at the top left, enter the full URL of a **public** GitHub repository (e.g., `https://github.com/microsoft/TypeScript-Node-Starter`).
-2.  **Fetch Files:** Click the **"Fetch Files"** button. The application will contact the GitHub API, and the file browser below the input box will populate with a list of reviewable files from the repository.
-3.  **Select a File:** Click on any file in the browser. Its content will load and appear in the main view on the right.
-4.  **Review Code:** Click the purple **"Review Code"** button at the top of the main view.
-5.  **Observe the Process:** The main view will be replaced by a panel showing "Gemini's thought process..." Watch as the review comments are streamed in real-time. This confirms the AI is actively working on your request.
-6.  **Analyze the Results:** Once the review is complete, the view will update to show two panels:
-    - A **Code Diff** panel at the top, highlighting the exact changes between the original and corrected code. Lines in red are deletions, and lines in green are additions.
-    - A **Review Comments** panel below, containing the detailed, markdown-formatted explanations from the AI.
+1.  **Enter Repository URL:** In the input box at the top left, enter the full URL of a **public** GitHub repository. The app will automatically fetch the file tree.
+2.  **Select Files:** Use the checkboxes in the file browser to select one or more files you want to review.
+3.  **Start Review:** Click the **"Review Selected"** button at the bottom of the file browser.
+4.  **Observe the Process:** The main view will populate with an accordion. Each selected file has its own collapsible section with a status indicator. The review process for all files starts automatically.
+5.  **Analyze the Results:**
+    -   Click on a file's header in the accordion to expand its review panel.
+    -   Watch as the "thought process" comments are streamed in real-time.
+    -   Once complete, the comments will be formatted, and the side-by-side diff will show the proposed changes.
+    -   Click on line number references like `[L15-18]` in the comments to highlight the code in the diff viewer.
+    -   Use the **"Auto-Fix & Format"** button for quick stylistic cleanups.
+6.  **Start a New Review:** Click the **"New Review"** button to clear the results and select new files.

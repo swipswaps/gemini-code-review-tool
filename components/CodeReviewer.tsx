@@ -3,9 +3,9 @@ import type { ReviewResult } from '../types';
 import { reviewCodeStream, lintCode } from '../services/geminiService';
 import { DiffViewer } from './DiffViewer';
 import { Spinner } from './Spinner';
-import { StreamingResponse } from './StreamingResponse';
 import { PlusCircleIcon } from './icons/PlusCircleIcon';
 import { WandIcon } from './icons/WandIcon';
+import { ReviewComments } from './ReviewComments';
 
 interface CodeReviewerProps {
   files: { path: string; content: string; error?: string }[];
@@ -15,7 +15,7 @@ interface CodeReviewerProps {
 type ReviewStatus = 'idle' | 'streaming' | 'complete' | 'error';
 type LintingStatus = 'idle' | 'linting' | 'complete' | 'error';
 
-interface ReviewState {
+export interface ReviewState {
   status: ReviewStatus;
   lintingStatus: LintingStatus;
   streamedComments: string;
@@ -182,11 +182,12 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
                     }
                     setHighlightedLines(lines);
                     
-                    // Add a small visual pulse to the diff viewer
-                    const diffViewer = (e.target as HTMLElement).closest('.p-4.border-t')?.querySelector('.diff-viewer-container');
-                    if (diffViewer) {
-                        diffViewer.classList.add('animate-pulse-once');
-                        setTimeout(() => diffViewer.classList.remove('animate-pulse-once'), 500);
+                    const diffViewer = currentRef.closest('.review-panel-content')?.querySelector('.diff-viewer-container');
+                    // FIX: Check if diffViewer is an HTMLElement to access offsetWidth for triggering a reflow.
+                    if (diffViewer instanceof HTMLElement) {
+                        diffViewer.classList.remove('animate-pulse-once');
+                        void diffViewer.offsetWidth; // Trigger reflow
+                        setTimeout(() => diffViewer.classList.add('animate-pulse-once'), 10);
                     }
                 }
             }
@@ -235,8 +236,8 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
           const isOpen = openFilePath === file.path;
 
           return (
-            <div key={file.path} className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden transition-all duration-300">
-                <button onClick={() => toggleAccordion(file.path)} className="w-full flex justify-between items-center p-4 text-left hover:bg-gray-700/50">
+            <div key={file.path} className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden transition-all duration-300 flex flex-col">
+                <button onClick={() => toggleAccordion(file.path)} className="w-full flex justify-between items-center p-4 text-left hover:bg-gray-700/50 flex-shrink-0">
                     <div className="flex items-center gap-3 truncate">
                         {getStatusIndicator(state.status)}
                         <span className="font-medium text-gray-300 truncate" title={file.path}>{file.path}</span>
@@ -244,42 +245,37 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
                     <ChevronIcon className={`w-5 h-5 transition-transform flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
                 </button>
                 {isOpen && (
-                    <div className="p-4 border-t border-gray-700 bg-gray-900/50">
-                        {state.status === 'streaming' && <StreamingResponse text={state.streamedComments} />}
-                        {state.status === 'complete' && state.result && (
-                             <div className="flex flex-col gap-4">
+                     <div className="review-panel-content border-t border-gray-700 bg-gray-900/50 flex-grow min-h-0 flex flex-col">
+                        {state.status === 'error' ? (
+                            <div className="p-4 bg-red-900/50 border border-red-700 text-red-300 rounded-lg m-4">{state.error}</div>
+                        ) : (
+                            <div className="flex flex-col gap-4 p-4 flex-grow min-h-0">
                                 <DiffViewer 
                                   originalCode={file.content} 
-                                  correctedCode={state.result.correctedCode} 
+                                  correctedCode={state.result?.correctedCode ?? file.content} 
                                   highlightedLines={highlightedLines} 
                                 />
                                 
-                                <div className="flex justify-end border-b border-gray-700 pb-4">
-                                    <button
-                                        onClick={() => handleLintFile(file)}
-                                        disabled={state.lintingStatus === 'linting'}
-                                        className="flex items-center gap-2 text-sm bg-gray-700 text-white font-semibold rounded-md px-3 py-1.5 hover:bg-gray-600 transition-colors duration-200 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed"
-                                        title="Automatically fix formatting and style issues"
-                                    >
-                                        {state.lintingStatus === 'linting' ? 
-                                            <Spinner className="w-4 h-4" /> : 
-                                            <WandIcon className="w-4 h-4" />
-                                        }
-                                        <span>{state.lintingStatus === 'linting' ? 'Formatting...' : 'Auto-Fix & Format'}</span>
-                                    </button>
-                                </div>
-
-                                <div className="bg-gray-800 rounded-lg border border-gray-700 max-h-96 overflow-y-auto">
-                                    <h3 className="text-md font-semibold p-3 border-b border-gray-700 sticky top-0 bg-gray-800/80 backdrop-blur-sm">Review Comments</h3>
-                                    <div 
-                                      ref={commentsRef} 
-                                      className="p-4 prose prose-invert max-w-none prose-pre:bg-gray-900 prose-span:cursor-pointer prose-span:bg-purple-600/30 prose-span:hover:bg-purple-600/50 prose-span:text-purple-300 prose-span:font-mono prose-span:px-1.5 prose-span:py-0.5 prose-span:rounded-md prose-span:mx-1 prose-span:transition-colors"
-                                      dangerouslySetInnerHTML={{ __html: state.result.reviewComments }} 
-                                    />
-                                </div>
+                                {state.status === 'complete' && state.result && (
+                                    <div className="flex justify-end border-b border-gray-700 pb-4">
+                                        <button
+                                            onClick={() => handleLintFile(file)}
+                                            disabled={state.lintingStatus === 'linting'}
+                                            className="flex items-center gap-2 text-sm bg-gray-700 text-white font-semibold rounded-md px-3 py-1.5 hover:bg-gray-600 transition-colors duration-200 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed"
+                                            title="Automatically fix formatting and style issues"
+                                        >
+                                            {state.lintingStatus === 'linting' ? 
+                                                <Spinner className="w-4 h-4" /> : 
+                                                <WandIcon className="w-4 h-4" />
+                                            }
+                                            <span>{state.lintingStatus === 'linting' ? 'Formatting...' : 'Auto-Fix & Format'}</span>
+                                        </button>
+                                    </div>
+                                )}
+                                
+                                <ReviewComments state={state} containerRef={commentsRef} />
                             </div>
                         )}
-                        {state.status === 'error' && <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg">{state.error}</div>}
                     </div>
                 )}
             </div>
