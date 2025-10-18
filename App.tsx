@@ -1,4 +1,5 @@
 
+
 import React, { useReducer, useCallback, useEffect } from 'react';
 import type { RepoTreeNode, HolisticAnalysisResult, RepoFileWithContent } from './types';
 import { fetchRepoTree, fetchAllFileContents, fetchFileContent, parseGitHubUrl } from './services/githubService';
@@ -219,8 +220,18 @@ export default function App(): React.ReactElement {
             />
         );
      }
-    // Fix: This comparison appears to be unintentional because the types have no overlap.
-    // The reducer logic ensures that if `error` has a value, `status` cannot be 'loading_repo'.
+    // Fix: Handle loading states to show a spinner instead of the default panel.
+    if (status === 'loading_repo' || status === 'fetching_files') {
+        return (
+            <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
+                <Spinner className="h-12 w-12 mb-4" />
+                <h2 className="text-xl font-semibold text-gray-300">
+                    {status === 'loading_repo' ? 'Loading Repository...' : 'Fetching Files...'}
+                </h2>
+            </div>
+        );
+    }
+    // Fix: Removed a confusing comment about a type error that was likely outdated. The `if (error)` check is correct.
     if (error) {
         return <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg">{error}</div>
     }
