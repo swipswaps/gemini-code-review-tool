@@ -281,7 +281,8 @@ export default function App(): React.ReactElement {
                     <div className="p-4 border-b border-gray-700">
                         <button
                             onClick={handleStartRepoAnalysis}
-                            disabled={status === 'analyzing_repo' || status === 'loading_repo'}
+                            // Fix: Removed `|| status === 'loading_repo'` check, which is invalid in this code branch due to TypeScript's control flow analysis and caused a type error. The button is not rendered in the 'loading_repo' state anyway.
+                            disabled={status === 'analyzing_repo'}
                             className="w-full bg-indigo-600 text-white font-semibold rounded-md px-4 py-2 hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors duration-200 flex items-center justify-center"
                         >
                             {status === 'analyzing_repo' ? <><Spinner className="w-5 h-5 mr-2"/><span>{repoAnalysisStatusText || 'Analyzing...'}</span></> : 'Analyze Entire Repository'}

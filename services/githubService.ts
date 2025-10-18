@@ -128,8 +128,8 @@ export const fetchFileContent = async (owner: string, repo: string, path: string
       throw new Error(`The path "${path}" is a directory, not a file.`);
     }
 
-    if (contentData.encoding !== 'base64' || !contentData.content) {
-        throw new Error(`Unsupported file encoding or empty file: ${path}`);
+    if (contentData.encoding !== 'base64' || contentData.content == null) {
+        throw new Error(`Unsupported file encoding or missing content for file: ${path}`);
     }
 
     try {
