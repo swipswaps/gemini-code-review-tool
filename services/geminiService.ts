@@ -1,5 +1,5 @@
 import { CODE_SEPARATOR } from '../utils/constants';
-import type { HolisticAnalysisResult } from '../types';
+import type { HolisticAnalysisResult, RepoAnalysisStreamEvent } from '../types';
 
 async function* streamFetch(response: Response): AsyncGenerator<string> {
     const reader = response.body!.getReader();
@@ -55,9 +55,9 @@ export async function lintCode(code: string, fileName: string): Promise<string> 
     return text.trim();
 }
 
-export const analyzeRepositoryHolistically = async (
+export async function* analyzeRepositoryStream(
   files: { path: string; content: string }[]
-): Promise<HolisticAnalysisResult> => {
+): AsyncGenerator<RepoAnalysisStreamEvent> {
     const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -69,5 +69,28 @@ export const analyzeRepositoryHolistically = async (
         throw new Error(`Failed to get repository analysis from server: ${errorText}`);
     }
     
-    return await response.json() as HolisticAnalysisResult;
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep the last, possibly incomplete, line
+
+        for (const line of lines) {
+            if (line.startsWith('EVENT: ')) {
+                try {
+                    const event = JSON.parse(line.substring(7));
+                    yield event as RepoAnalysisStreamEvent;
+                } catch(e) {
+                    console.error("Failed to parse analysis stream event:", e, "Line:", line);
+                }
+            }
+        }
+    }
 };

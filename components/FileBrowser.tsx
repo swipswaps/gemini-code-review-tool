@@ -1,39 +1,52 @@
-
 import React, { useState } from 'react';
 import type { RepoTreeNode } from '../types';
 import { FileIcon } from './icons/FileIcon';
 import { FolderIcon } from './icons/FolderIcon';
 import { FolderOpenIcon } from './icons/FolderOpenIcon';
+import { Spinner } from './Spinner';
 
 interface FileBrowserProps {
   nodes: RepoTreeNode[];
   selectedFilePaths: Set<string>;
   onToggleFile: (path: string) => void;
   onSelectAll: (select: boolean) => void;
+  onExpandFolder: (folder: RepoTreeNode) => void;
 }
 
 const TreeNode: React.FC<{
   node: RepoTreeNode;
   selectedFilePaths: Set<string>;
   onToggleFile: (path: string) => void;
+  onExpandFolder: (folder: RepoTreeNode) => void;
   level: number;
-}> = ({ node, selectedFilePaths, onToggleFile, level }) => {
+}> = ({ node, selectedFilePaths, onToggleFile, onExpandFolder, level }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const indentStyle = { paddingLeft: `${level * 1.25 + 0.75}rem` };
 
   if (node.type === 'folder') {
+    const handleToggle = async () => {
+        if (!isOpen && node.children === null) {
+            setIsLoading(true);
+            await onExpandFolder(node);
+            setIsLoading(false);
+        }
+        setIsOpen(!isOpen);
+    };
+
     return (
       <li>
         <button
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={handleToggle}
           className="w-full text-left flex items-center space-x-3 px-3 py-2 rounded-md transition-colors duration-150 text-gray-400 hover:bg-gray-700/50 hover:text-gray-200"
           style={indentStyle}
           title={node.path}
         >
           {isOpen ? <FolderOpenIcon className="h-5 w-5 flex-shrink-0" /> : <FolderIcon className="h-5 w-5 flex-shrink-0" />}
           <span className="truncate text-sm font-medium">{node.name}</span>
+          {isLoading && <Spinner className="w-4 h-4 ml-auto" />}
         </button>
-        {isOpen && (
+        {isOpen && node.children && (
           <ul>
             {node.children.map(child => (
               <TreeNode
@@ -41,6 +54,7 @@ const TreeNode: React.FC<{
                 node={child}
                 selectedFilePaths={selectedFilePaths}
                 onToggleFile={onToggleFile}
+                onExpandFolder={onExpandFolder}
                 level={level + 1}
               />
             ))}
@@ -78,7 +92,7 @@ const TreeNode: React.FC<{
 };
 
 
-export const FileBrowser: React.FC<FileBrowserProps> = ({ nodes, selectedFilePaths, onToggleFile, onSelectAll }) => {
+export const FileBrowser: React.FC<FileBrowserProps> = ({ nodes, selectedFilePaths, onToggleFile, onSelectAll, onExpandFolder }) => {
   if (nodes.length === 0) {
     return <div className="p-4 text-gray-500 text-center">No files to display.</div>;
   }
@@ -87,13 +101,13 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({ nodes, selectedFilePat
     const paths: string[] = [];
     const traverse = (node: RepoTreeNode) => {
         if (node.type === 'file') paths.push(node.path);
-        else node.children.forEach(traverse);
+        else if (node.children) node.children.forEach(traverse);
     };
     nodes.forEach(traverse);
     return paths;
-  }, [nodes]);
+  }, [nodes, selectedFilePaths]); // Re-calculate if selection changes to correctly get all known paths
 
-  const allSelected = allFilePaths.length > 0 && selectedFilePaths.size === allFilePaths.length;
+  const allSelected = allFilePaths.length > 0 && selectedFilePaths.size >= allFilePaths.length;
 
   return (
     <>
@@ -111,6 +125,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({ nodes, selectedFilePat
               node={node}
               selectedFilePaths={selectedFilePaths}
               onToggleFile={onToggleFile}
+              onExpandFolder={onExpandFolder}
               level={0}
              />
           ))}

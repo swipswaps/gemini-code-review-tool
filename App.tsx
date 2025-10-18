@@ -1,7 +1,7 @@
 import React, { useReducer, useCallback, useEffect } from 'react';
-import type { RepoTreeNode, HolisticAnalysisResult, RepoFileWithContent } from './types';
-import { fetchRepoTree, fetchAllFileContents, fetchFileContent, parseGitHubUrl } from './services/githubService';
-import { analyzeRepositoryHolistically } from './services/geminiService';
+import type { RepoTreeNode, HolisticAnalysisResult, RepoFileWithContent, RepoTreeFolder, RepoAnalysisStreamEvent } from './types';
+import { fetchRepoRoot, fetchFolderContents, fetchAllFileContents, fetchFileContent, parseGitHubUrl } from './services/githubService';
+import { analyzeRepositoryStream } from './services/geminiService';
 import { RepoInput } from './components/RepoInput';
 import { FileBrowser } from './components/FileBrowser';
 import { CodeReviewer } from './components/CodeReviewer';
@@ -30,6 +30,7 @@ type AppAction =
   | { type: 'FETCH_REPO_START' }
   | { type: 'FETCH_REPO_SUCCESS'; payload: RepoTreeNode[] }
   | { type: 'FETCH_REPO_FAILURE'; payload: string }
+  | { type: 'EXPAND_FOLDER_SUCCESS'; payload: { folderPath: string; children: RepoTreeNode[] } }
   | { type: 'TOGGLE_FILE_SELECTION'; payload: string }
   | { type: 'SET_ALL_FILES_SELECTED'; payload: { nodes: RepoTreeNode[]; select: boolean } }
   | { type: 'CLEAR_SELECTION' }
@@ -38,13 +39,14 @@ type AppAction =
   | { type: 'FILE_REVIEW_FAILURE'; payload: string }
   | { type: 'START_REPO_ANALYSIS' }
   | { type: 'REPO_ANALYSIS_STATUS_UPDATE'; payload: string }
-  | { type: 'REPO_ANALYSIS_SUCCESS'; payload: { result: HolisticAnalysisResult; files: RepoFileWithContent[] } }
+  | { type: 'REPO_ANALYSIS_DATA_CHUNK'; payload: HolisticAnalysisResult }
+  | { type: 'REPO_ANALYSIS_COMPLETE'; payload: { files: RepoFileWithContent[] } }
   | { type: 'REPO_ANALYSIS_FAILURE'; payload: string }
   | { type: 'RESET' };
 
 const initialState: AppState = {
   status: 'idle',
-  repoUrl: 'https://github.com/microsoft/TypeScript-Node-Starter',
+  repoUrl: 'https://github.com/google/generative-ai-docs',
   githubToken: '',
   repoTree: [],
   selectedFilePaths: new Set(),
@@ -59,12 +61,11 @@ const getAllFilePaths = (nodes: RepoTreeNode[]): string[] => {
   const paths: string[] = [];
   const traverse = (node: RepoTreeNode) => {
     if (node.type === 'file') paths.push(node.path);
-    else node.children.forEach(traverse);
+    else if (node.children) node.children.forEach(traverse);
   };
   nodes.forEach(traverse);
   return paths;
 };
-
 
 const appReducer = (state: AppState, action: AppAction): AppState => {
   switch (action.type) {
@@ -78,6 +79,23 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
       return { ...state, status: 'repo_loaded', repoTree: action.payload, error: action.payload.length === 0 ? 'No files found in this repository.' : null };
     case 'FETCH_REPO_FAILURE':
       return { ...state, status: 'error', error: action.payload, repoTree: [] };
+    case 'EXPAND_FOLDER_SUCCESS': {
+      const newTree = JSON.parse(JSON.stringify(state.repoTree));
+      const findAndInject = (nodes: RepoTreeNode[]) => {
+          for (let node of nodes) {
+              if (node.path === action.payload.folderPath && node.type === 'folder') {
+                  (node as RepoTreeFolder).children = action.payload.children;
+                  return true;
+              }
+              if (node.type === 'folder' && node.children) {
+                  if (findAndInject(node.children)) return true;
+              }
+          }
+          return false;
+      };
+      findAndInject(newTree);
+      return { ...state, repoTree: newTree };
+    }
     case 'TOGGLE_FILE_SELECTION': {
       const newSet = new Set(state.selectedFilePaths);
       if (newSet.has(action.payload)) newSet.delete(action.payload);
@@ -100,16 +118,17 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     case 'FILE_REVIEW_FAILURE':
       return { ...state, status: 'error', error: action.payload };
     case 'START_REPO_ANALYSIS':
-      return { ...state, status: 'analyzing_repo', holisticAnalysisResult: null, error: null };
+      return { ...state, status: 'analyzing_repo', holisticAnalysisResult: {}, error: null, repoAnalysisStatusText: '' };
     case 'REPO_ANALYSIS_STATUS_UPDATE':
       return { ...state, repoAnalysisStatusText: action.payload };
-    case 'REPO_ANALYSIS_SUCCESS':
-      return { ...state, status: 'repo_loaded', holisticAnalysisResult: action.payload.result, allFilesWithContent: action.payload.files };
+    case 'REPO_ANALYSIS_DATA_CHUNK':
+        return { ...state, holisticAnalysisResult: { ...state.holisticAnalysisResult, ...action.payload } };
+    case 'REPO_ANALYSIS_COMPLETE':
+      return { ...state, status: 'repo_loaded', allFilesWithContent: action.payload.files };
     case 'REPO_ANALYSIS_FAILURE':
-      return { ...state, status: 'error', error: action.payload };
+      return { ...state, status: 'repo_loaded', error: action.payload, holisticAnalysisResult: state.holisticAnalysisResult }; // Keep partial results on failure
     case 'RESET':
-        const isRepoLoaded = state.repoTree.length > 0;
-        return { ...initialState, repoUrl: state.repoUrl, githubToken: state.githubToken, repoTree: state.repoTree, status: isRepoLoaded ? 'repo_loaded' : 'idle' };
+        return { ...initialState, repoUrl: state.repoUrl, githubToken: state.githubToken };
     default:
       return state;
   }
@@ -120,25 +139,47 @@ export default function App(): React.ReactElement {
   const { status, repoUrl, githubToken, repoTree, selectedFilePaths, filesForReview, holisticAnalysisResult, allFilesWithContent, repoAnalysisStatusText, error } = state;
 
   const handleFetchFiles = useCallback(async (urlToFetch: string) => {
-    if (parseGitHubUrl(urlToFetch)) {
-      dispatch({ type: 'FETCH_REPO_START' });
-      try {
-        const fetchedTree = await fetchRepoTree(urlToFetch, githubToken);
-        dispatch({ type: 'FETCH_REPO_SUCCESS', payload: fetchedTree });
-      } catch (err) {
-        dispatch({ type: 'FETCH_REPO_FAILURE', payload: err instanceof Error ? err.message : 'An unknown error occurred.' });
-      }
-    } else {
-      dispatch({ type: 'FETCH_REPO_FAILURE', payload: 'Please enter a valid GitHub repository URL.' });
+    if (!parseGitHubUrl(urlToFetch)) {
+        dispatch({ type: 'FETCH_REPO_FAILURE', payload: 'Please enter a valid GitHub repository URL.' });
+        return;
+    }
+    
+    dispatch({ type: 'FETCH_REPO_START' });
+    try {
+      const fetchedTree = await fetchRepoRoot(urlToFetch, githubToken);
+      dispatch({ type: 'FETCH_REPO_SUCCESS', payload: fetchedTree });
+    } catch (err) {
+      dispatch({ type: 'FETCH_REPO_FAILURE', payload: err instanceof Error ? err.message : 'An unknown error occurred.' });
     }
   }, [githubToken]);
 
   useEffect(() => {
+    if (!repoUrl) {
+        dispatch({ type: 'RESET' });
+        return;
+    }
+
     const handler = setTimeout(() => {
-      if (repoUrl) handleFetchFiles(repoUrl);
+        handleFetchFiles(repoUrl);
     }, 500);
+
     return () => clearTimeout(handler);
   }, [repoUrl, githubToken, handleFetchFiles]);
+
+    const handleExpandFolder = useCallback(async (folder: RepoTreeNode) => {
+        if (folder.type !== 'folder' || folder.children !== null) return;
+        
+        const parsed = parseGitHubUrl(repoUrl);
+        if (!parsed) return;
+        
+        try {
+            const children = await fetchFolderContents(parsed.owner, parsed.repo, folder.path, githubToken);
+            dispatch({ type: 'EXPAND_FOLDER_SUCCESS', payload: { folderPath: folder.path, children }});
+        } catch (err) {
+            // Handle folder expansion error silently in console for now
+            console.error(`Failed to expand folder ${folder.path}:`, err);
+        }
+    }, [repoUrl, githubToken]);
 
   const handleStartReview = useCallback(async () => {
     if (selectedFilePaths.size === 0) return;
@@ -174,13 +215,21 @@ export default function App(): React.ReactElement {
 
     dispatch({ type: 'START_REPO_ANALYSIS' });
     const { owner, repo } = parsed;
+    let fetchedContents: RepoFileWithContent[] = [];
     try {
-      dispatch({ type: 'REPO_ANALYSIS_STATUS_UPDATE', payload: 'Fetching all file contents...' });
-      const fetchedContents = await fetchAllFileContents(owner, repo, repoTree, githubToken);
+      dispatch({ type: 'REPO_ANALYSIS_STATUS_UPDATE', payload: 'Fetching all file contents (up to 100)...' });
+      fetchedContents = await fetchAllFileContents(owner, repo, repoTree, githubToken);
       
-      dispatch({ type: 'REPO_ANALYSIS_STATUS_UPDATE', payload: 'Analyzing repository with Gemini...' });
-      const result = await analyzeRepositoryHolistically(fetchedContents);
-      dispatch({ type: 'REPO_ANALYSIS_SUCCESS', payload: { result, files: fetchedContents } });
+      const stream = analyzeRepositoryStream(fetchedContents);
+      for await (const event of stream) {
+        if (event.type === 'status') {
+          dispatch({ type: 'REPO_ANALYSIS_STATUS_UPDATE', payload: event.message });
+        } else if (event.type === 'data') {
+          dispatch({ type: 'REPO_ANALYSIS_DATA_CHUNK', payload: event.payload });
+        }
+      }
+      dispatch({ type: 'REPO_ANALYSIS_COMPLETE', payload: { files: fetchedContents } });
+
     } catch (err) {
       dispatch({ type: 'REPO_ANALYSIS_FAILURE', payload: err instanceof Error ? err.message : 'An unknown error occurred.' });
     }
@@ -197,7 +246,7 @@ export default function App(): React.ReactElement {
         </ErrorBoundary>
       );
     }
-    if (holisticAnalysisResult) {
+    if (status === 'analyzing_repo' || (status === 'repo_loaded' && holisticAnalysisResult)) {
       return (
         <ErrorBoundary onReset={() => dispatch({ type: 'RESET' })}>
           <RepoAnalyzer 
@@ -210,17 +259,6 @@ export default function App(): React.ReactElement {
         </ErrorBoundary>
       );
     }
-     if (status === 'analyzing_repo') {
-        return (
-             <RepoAnalyzer 
-                analysisResult={null}
-                originalFiles={null}
-                isLoading={true}
-                statusText={repoAnalysisStatusText}
-                onReset={() => dispatch({ type: 'RESET' })}
-            />
-        );
-     }
     if (status === 'loading_repo' || status === 'fetching_files') {
         return (
             <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
@@ -231,7 +269,7 @@ export default function App(): React.ReactElement {
             </div>
         );
     }
-    if (error) {
+    if (status === 'error' && error) {
         return <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg">{error}</div>
     }
     return (
@@ -288,6 +326,7 @@ export default function App(): React.ReactElement {
                         selectedFilePaths={selectedFilePaths} 
                         onToggleFile={(path) => dispatch({ type: 'TOGGLE_FILE_SELECTION', payload: path })}
                         onSelectAll={(select) => dispatch({ type: 'SET_ALL_FILES_SELECTED', payload: { nodes: repoTree, select }})}
+                        onExpandFolder={handleExpandFolder}
                     />
                 </>
             ) : (

@@ -19,94 +19,63 @@ export const parseGitHubUrl = (url: string): { owner: string; repo: string } | n
   }
 };
 
-const buildTree = (files: { path: string }[]): RepoTreeNode[] => {
-  const root: RepoTreeFolder = { type: 'folder', name: 'root', path: '', children: [] };
-  
-  files.forEach(file => {
-    let currentNode = root;
-    const parts = file.path.split('/');
-    parts.forEach((part, index) => {
-      const isFile = index === parts.length - 1;
-      let childNode = currentNode.children.find(c => c.name === part);
-
-      if (!childNode) {
-        if (isFile) {
-          const newFile: RepoTreeFile = { type: 'file', path: file.path, name: part };
-          currentNode.children.push(newFile);
-        } else {
-          const folderPath = parts.slice(0, index + 1).join('/');
-          const newFolder: RepoTreeFolder = { type: 'folder', path: folderPath, name: part, children: [] };
-          currentNode.children.push(newFolder);
-          childNode = newFolder;
-        }
-      }
-      
-      if (childNode && childNode.type === 'folder') {
-        currentNode = childNode;
-      }
-    });
-  });
-
-  const sortChildren = (node: RepoTreeFolder) => {
-    node.children.sort((a, b) => {
+const sortNodes = (nodes: RepoTreeNode[]): RepoTreeNode[] => {
+    return nodes.sort((a, b) => {
         if (a.type === 'folder' && b.type === 'file') return -1;
         if (a.type === 'file' && b.type === 'folder') return 1;
         return a.name.localeCompare(b.name);
     });
-    node.children.forEach(child => {
-        if (child.type === 'folder') {
-            sortChildren(child);
-        }
-    });
-  };
-
-  sortChildren(root);
-  return root.children;
 };
 
-
-// Fetches the file tree for a repository
-export const fetchRepoTree = async (repoUrl: string, token?: string): Promise<RepoTreeNode[]> => {
+// Fetches the top-level file tree for a repository
+export const fetchRepoRoot = async (repoUrl: string, token?: string): Promise<RepoTreeNode[]> => {
   const parsed = parseGitHubUrl(repoUrl);
   if (!parsed) {
     throw new Error('Invalid GitHub repository URL.');
   }
-  const { owner, repo } = parsed;
-
-  const headers: HeadersInit = {};
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const repoInfoResponse = await fetch(`${API_BASE}/repos/${owner}/${repo}`, { headers });
-  if (!repoInfoResponse.ok) {
-    if (repoInfoResponse.status === 404) throw new Error('Repository not found. Is it public?');
-    if (repoInfoResponse.status === 403) throw new Error('GitHub API rate limit exceeded. Please provide a Personal Access Token.');
-    throw new Error(`Failed to fetch repository info (status: ${repoInfoResponse.status}).`);
-  }
-  const repoInfo = await repoInfoResponse.json();
-  const defaultBranch = repoInfo.default_branch;
-
-  const treeResponse = await fetch(`${API_BASE}/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`, { headers });
-  if (!treeResponse.ok) {
-    throw new Error(`Failed to fetch repository file tree (status: ${treeResponse.status}).`);
-  }
-  const treeData = await treeResponse.json();
-
-  if (treeData.truncated) {
-    console.warn("Warning: The file tree is too large and has been truncated by the GitHub API. Not all files may be shown.");
-  }
-
-  const files: { path: string }[] = treeData.tree
-    .filter((item: any) => item.type === 'blob')
-    .map((item: any) => ({ path: item.path }));
-
-  if (files.length === 0) {
-    console.log("No reviewable files found in the repository.");
-  }
-  
-  return buildTree(files);
+  return fetchFolderContents(parsed.owner, parsed.repo, '', token);
 };
+
+
+// Fetches the contents of a specific folder
+export const fetchFolderContents = async (owner: string, repo: string, path: string, token?: string): Promise<RepoTreeNode[]> => {
+    const headers: HeadersInit = {};
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const contentsResponse = await fetch(`${API_BASE}/repos/${owner}/${repo}/contents/${path}`, { headers });
+    if (!contentsResponse.ok) {
+        if (contentsResponse.status === 404) throw new Error(`Folder not found: ${path}`);
+        if (contentsResponse.status === 403) throw new Error('GitHub API rate limit exceeded. Please provide a Personal Access Token.');
+        throw new Error(`Failed to fetch folder contents for ${path} (status: ${contentsResponse.status}).`);
+    }
+
+    const contents = await contentsResponse.json();
+    if (!Array.isArray(contents)) {
+        throw new Error("The path does not appear to be a directory.");
+    }
+    
+    const nodes: RepoTreeNode[] = contents.map((item: any) => {
+        if (item.type === 'dir') {
+            return {
+                type: 'folder',
+                path: item.path,
+                name: item.name,
+                children: null, // Mark as lazy-loadable
+            } as RepoTreeFolder;
+        } else {
+            return {
+                type: 'file',
+                path: item.path,
+                name: item.name,
+            } as RepoTreeFile;
+        }
+    });
+
+    return sortNodes(nodes);
+};
+
 
 // Fetches the content of a single file
 export const fetchFileContent = async (owner: string, repo: string, path: string, token?: string): Promise<string> => {
@@ -129,7 +98,9 @@ export const fetchFileContent = async (owner: string, repo: string, path: string
     }
 
     if (contentData.encoding !== 'base64' || contentData.content == null) {
-        throw new Error(`Unsupported file encoding or missing content for file: ${path}`);
+      // Handle empty files gracefully
+      if (contentData.content === '') return '';
+      throw new Error(`Unsupported file encoding or missing content for file: ${path}`);
     }
 
     try {
@@ -140,42 +111,45 @@ export const fetchFileContent = async (owner: string, repo: string, path: string
     }
 };
 
-// Helper function to flatten the tree and get all file paths
-const getAllFilePaths = (nodes: RepoTreeNode[]): string[] => {
-  const paths: string[] = [];
-  const traverse = (node: RepoTreeNode) => {
-    if (node.type === 'file') {
-      paths.push(node.path);
-    } else if (node.type === 'folder') {
-      node.children.forEach(traverse);
-    }
-  };
-  nodes.forEach(traverse);
-  return paths;
-};
-
-// Fetches the content for all files in the repository tree
+// Fetches the content for all files in the repository tree by recursively fetching folder contents
 export const fetchAllFileContents = async (
   owner: string,
   repo: string,
-  tree: RepoTreeNode[],
+  initialTree: RepoTreeNode[],
   token?: string
 ): Promise<{ path: string; content: string }[]> => {
-  let filePaths = getAllFilePaths(tree);
   
-  if (filePaths.length > 100) {
-    console.warn(`Repository has ${filePaths.length} files. Limiting analysis to the first 100 files to avoid performance issues.`);
-    filePaths = filePaths.slice(0, 100);
-  }
+  const allFiles: { path: string, content: string }[] = [];
+  const foldersToFetch: RepoTreeNode[] = [...initialTree];
+  let fetchedPaths = new Set<string>();
 
-  const contentPromises = filePaths.map(path => 
-    fetchFileContent(owner, repo, path, token)
-      .then(content => ({ path, content }))
-      .catch(error => {
-        console.error(`Skipping file ${path} due to fetch error:`, error);
-        return { path, content: `// Error fetching content: ${(error as Error).message}` };
-      })
-  );
+  while(foldersToFetch.length > 0) {
+      const node = foldersToFetch.pop()!;
+      if (fetchedPaths.has(node.path)) continue;
+      fetchedPaths.add(node.path);
+
+      if (node.type === 'file') {
+          try {
+              const content = await fetchFileContent(owner, repo, node.path, token);
+              allFiles.push({ path: node.path, content });
+          } catch(e) {
+              console.error(`Skipping file ${node.path} due to fetch error:`, e);
+              allFiles.push({ path: node.path, content: `// Error fetching content: ${(e as Error).message}` });
+          }
+      } else if (node.type === 'folder') {
+          try {
+            const children = await fetchFolderContents(owner, repo, node.path, token);
+            foldersToFetch.push(...children);
+          } catch(e) {
+             console.error(`Skipping folder ${node.path} due to fetch error:`, e);
+          }
+      }
+
+      if (allFiles.length >= 100) {
+          console.warn(`Reached 100 files. Limiting analysis to the first 100 files fetched to avoid performance issues.`);
+          break;
+      }
+  }
   
-  return Promise.all(contentPromises);
+  return allFiles;
 };

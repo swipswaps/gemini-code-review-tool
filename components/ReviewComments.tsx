@@ -1,7 +1,6 @@
 
 import React from 'react';
 import { marked } from 'marked';
-// Fix: Correct import path for ReviewState type.
 import type { ReviewState } from '../types';
 import { WandIcon } from './icons/WandIcon';
 import { CODE_SEPARATOR } from '../utils/constants';

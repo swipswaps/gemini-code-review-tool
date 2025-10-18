@@ -5,8 +5,9 @@ An automated code review tool that uses the Gemini API to analyze files from pub
 ## Key Features
 
 - **Secure Architecture:** The Gemini API key is managed securely in a backend Node.js server, ensuring it is never exposed to the browser.
+- **High-Performance File Browser:** Implements lazy loading for directories, providing an instantaneous experience even with massive repositories.
+- **Real-Time Streaming Analysis:** The holistic architectural review now streams results and status updates live, providing a transparent and engaging user experience.
 - **Direct GitHub Integration:** Fetches and displays files directly from any public GitHub repository using the GitHub REST API.
-- **Deep Repository Analysis:** Go beyond single files with a holistic architectural review. The tool analyzes the entire codebase to identify cross-cutting concerns, dependency issues, and common error patterns.
 - **Multi-File Review & Formatting:** Select multiple files for a batch review, with each file's results displayed in a convenient accordion view. Includes a one-click "Auto-Fix & Format" feature for quick cleanups.
 - **Interactive Feedback with Diffs:** Review comments and architectural suggestions are interactive. Click on a line number reference (e.g., `L15-18`) to highlight the code, or view side-by-side diffs for suggested architectural fixes.
 - **Modern & Resilient UI:** Built with React, TypeScript, and Tailwind CSS for a clean and responsive user experience. Includes error boundaries to gracefully handle runtime errors.

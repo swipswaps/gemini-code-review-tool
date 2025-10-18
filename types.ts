@@ -1,4 +1,3 @@
-
 export interface RepoTreeFile {
   type: 'file';
   path: string;
@@ -9,7 +8,7 @@ export interface RepoTreeFolder {
   type: 'folder';
   path: string;
   name: string;
-  children: RepoTreeNode[];
+  children: RepoTreeNode[] | null; // Null indicates contents have not been fetched yet
 }
 
 export type RepoTreeNode = RepoTreeFile | RepoTreeFolder;
@@ -42,10 +41,10 @@ export interface DependencyReview {
 }
 
 export interface HolisticAnalysisResult {
-  overallAnalysis: string;
-  dependencyReview: DependencyReview;
-  errorTrends: ErrorTrend[];
-  suggestedFixes: SuggestedFix[];
+  overallAnalysis?: string;
+  dependencyReview?: DependencyReview;
+  errorTrends?: ErrorTrend[];
+  suggestedFixes?: SuggestedFix[];
 }
 
 export type ReviewStatus = 'idle' | 'streaming' | 'complete' | 'error';
@@ -58,3 +57,8 @@ export interface ReviewState {
   result: ReviewResult | null;
   error: string | null;
 }
+
+// Type for streaming analysis updates from the server
+export type RepoAnalysisStreamEvent = 
+    | { type: 'status', message: string }
+    | { type: 'data', payload: HolisticAnalysisResult };

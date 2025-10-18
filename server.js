@@ -20,6 +20,11 @@ if (!API_KEY) {
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
+// --- Helper Functions ---
+const sendEvent = (res, event) => {
+    res.write(`EVENT: ${JSON.stringify(event)}\n`);
+};
+
 // --- API Endpoints ---
 
 // Endpoint for streaming code review
@@ -87,47 +92,66 @@ app.post('/api/lint', async (req, res) => {
     }
 });
 
-// Endpoint for holistic analysis
+// Streaming endpoint for holistic analysis
 app.post('/api/analyze', async (req, res) => {
     const { files } = req.body;
     if (!files || !Array.isArray(files)) {
         return res.status(400).send('Missing "files" array in request body.');
     }
+    
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    
     try {
         const fileContentsString = files.map(f => `// FILE: ${f.path}\n${f.content}`).join('\n\n---\n\n');
-        const prompt = `
-            You are an expert solution architect. Conduct a holistic audit of this codebase. Return a JSON object with your findings.
-            Your analysis must cover:
-            1.  **Overall Analysis:** High-level architecture, strengths, weaknesses.
-            2.  **Dependency Review:** Analyze package.json for issues.
-            3.  **Error Trends:** Identify recurring problems across multiple files.
-            4.  **Suggested Fixes:** A list of concrete fixes, each with a file path, description, and the complete corrected code.
-            Codebase:
-            ${fileContentsString}
-        `;
-        const response = await ai.models.generateContent({
+        
+        // Step 1: Overall Analysis
+        sendEvent(res, { type: 'status', message: 'Analyzing overall architecture...' });
+        const overallAnalysisResponse = await ai.models.generateContent({
             model: "gemini-2.5-pro",
-            contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.OBJECT,
-                    properties: {
-                        overallAnalysis: { type: Type.STRING },
-                        dependencyReview: { type: Type.OBJECT, properties: { analysis: { type: Type.STRING }, suggestions: { type: Type.ARRAY, items: { type: Type.STRING } } } },
-                        errorTrends: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { trendDescription: { type: Type.STRING }, filesAffected: { type: Type.ARRAY, items: { type: Type.STRING } } } } },
-                        suggestedFixes: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { filePath: { type: Type.STRING }, description: { type: Type.STRING }, correctedCode: { type: Type.STRING } } } }
-                    },
-                    required: ["overallAnalysis", "dependencyReview", "errorTrends", "suggestedFixes"]
-                }
-            }
+            contents: `Analyze the overall architecture of this codebase. What are its strengths and weaknesses? Provide a concise, high-level summary in markdown. Codebase:\n${fileContentsString}`,
         });
-        res.json(JSON.parse(response.text.trim()));
+        sendEvent(res, { type: 'data', payload: { overallAnalysis: overallAnalysisResponse.text }});
+
+        // Step 2: Dependency Review
+        const packageJsonFile = files.find(f => f.path.endsWith('package.json'));
+        if (packageJsonFile) {
+            sendEvent(res, { type: 'status', message: 'Reviewing package.json for dependencies...' });
+            const depReviewResponse = await ai.models.generateContent({
+                model: "gemini-2.5-pro",
+                contents: `Analyze this package.json for potential issues like outdated dependencies, security vulnerabilities, or strange configurations. Provide a markdown summary of your analysis and a list of suggestions. package.json:\n${packageJsonFile.content}`,
+                config: { responseMimeType: "application/json", responseSchema: { type: Type.OBJECT, properties: { analysis: { type: Type.STRING }, suggestions: { type: Type.ARRAY, items: { type: Type.STRING }}}}}
+            });
+            sendEvent(res, { type: 'data', payload: { dependencyReview: JSON.parse(depReviewResponse.text.trim()) }});
+        }
+
+        // Step 3: Error Trends
+        sendEvent(res, { type: 'status', message: 'Identifying common error trends...' });
+        const errorTrendsResponse = await ai.models.generateContent({
+            model: "gemini-2.5-pro",
+            contents: `Identify up to 3 recurring problems or anti-patterns in this codebase. For each trend, provide a description and a list of files affected. Codebase:\n${fileContentsString}`,
+            config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { trendDescription: { type: Type.STRING }, filesAffected: { type: Type.ARRAY, items: { type: Type.STRING } } } } } }
+        });
+        sendEvent(res, { type: 'data', payload: { errorTrends: JSON.parse(errorTrendsResponse.text.trim()) }});
+
+        // Step 4: Suggested Fixes
+        sendEvent(res, { type: 'status', message: 'Generating suggested fixes...' });
+        const suggestedFixesResponse = await ai.models.generateContent({
+            model: "gemini-2.5-pro",
+            contents: `Based on the codebase, provide a list of up to 5 specific, actionable improvements. For each, give the file path, a markdown description of the fix, and the complete, corrected code for that file. Codebase:\n${fileContentsString}`,
+            config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { filePath: { type: Type.STRING }, description: { type: Type.STRING }, correctedCode: { type: Type.STRING } } } } }
+        });
+        sendEvent(res, { type: 'data', payload: { suggestedFixes: JSON.parse(suggestedFixesResponse.text.trim()) }});
+
+        sendEvent(res, { type: 'status', message: 'Analysis complete.' });
+        res.end();
+
     } catch (error) {
-        console.error("Error in /api/analyze:", error);
-        res.status(500).send('Failed to get repository analysis from Gemini API.');
+        console.error("Error in /api/analyze stream:", error);
+        sendEvent(res, { type: 'status', message: `An error occurred: ${error.message}` });
+        res.end();
     }
 });
+
 
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
