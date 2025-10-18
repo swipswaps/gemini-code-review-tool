@@ -8,7 +8,7 @@ import { PlusCircleIcon } from './icons/PlusCircleIcon';
 import { WandIcon } from './icons/WandIcon';
 
 interface CodeReviewerProps {
-  files: { path: string; content: string }[];
+  files: { path: string; content: string; error?: string }[];
   onReset: () => void;
 }
 
@@ -36,7 +36,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
   const [highlightedLines, setHighlightedLines] = useState<Set<number> | null>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
 
-  const runReview = useCallback(async (file: { path: string; content: string }) => {
+  const runReview = useCallback(async (file: { path: string; content: string; error?: string }) => {
     setReviewStates(prev => new Map(prev).set(file.path, {
         status: 'streaming',
         lintingStatus: 'idle',
@@ -89,7 +89,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
     }
   }, []);
   
-    const handleLintFile = useCallback(async (file: { path: string; content: string }) => {
+    const handleLintFile = useCallback(async (file: { path: string; content: string; error?: string }) => {
         setReviewStates(prev => {
             const newStates = new Map(prev);
             const currentState = newStates.get(file.path);
@@ -132,18 +132,31 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
   useEffect(() => {
     const initialStates = new Map<string, ReviewState>();
     files.forEach(file => {
-        initialStates.set(file.path, {
-            status: 'idle',
-            lintingStatus: 'idle',
-            streamedComments: '',
-            result: null,
-            error: null,
-        });
+        if (file.error) {
+             initialStates.set(file.path, {
+                status: 'error',
+                lintingStatus: 'idle',
+                streamedComments: '',
+                result: null,
+                error: file.error,
+            });
+        } else {
+            initialStates.set(file.path, {
+                status: 'idle',
+                lintingStatus: 'idle',
+                streamedComments: '',
+                result: null,
+                error: null,
+            });
+        }
     });
     setReviewStates(initialStates);
 
-    files.forEach(file => runReview(file));
-
+    files.forEach(file => {
+        if (!file.error) {
+            runReview(file);
+        }
+    });
   }, [files, runReview]);
   
   // Effect for handling clicks on line number references in comments

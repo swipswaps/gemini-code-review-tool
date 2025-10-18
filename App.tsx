@@ -7,6 +7,7 @@ import { CodeReviewer } from './components/CodeReviewer';
 import { Spinner } from './components/Spinner';
 import { GithubIcon } from './components/icons/GithubIcon';
 import { InfoIcon } from './components/icons/InfoIcon';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const parseGitHubUrl = (url: string): { owner: string; repo: string } | null => {
     try {
@@ -24,7 +25,7 @@ export default function App(): React.ReactElement {
   const [repoUrl, setRepoUrl] = useState<string>('https://github.com/microsoft/TypeScript-Node-Starter');
   const [files, setFiles] = useState<RepoTreeNode[]>([]);
   const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(new Set());
-  const [filesForReview, setFilesForReview] = useState<{ path: string; content: string }[] | null>(null);
+  const [filesForReview, setFilesForReview] = useState<{ path: string; content: string; error?: string }[] | null>(null);
   
   const [isLoadingRepo, setIsLoadingRepo] = useState<boolean>(false);
   const [isFetchingContent, setIsFetchingContent] = useState<boolean>(false);
@@ -97,17 +98,23 @@ export default function App(): React.ReactElement {
     const { owner, repo } = parsed;
 
     try {
-        const filesToReview = await Promise.all(
-            Array.from(selectedFilePaths).map(async path => {
-                const content = await fetchFileContent(owner, repo, path);
-                return { path, content };
-            })
-        );
+        const paths = Array.from(selectedFilePaths);
+        const contentPromises = paths.map(path => fetchFileContent(owner, repo, path));
+        
+        const results = await Promise.allSettled(contentPromises);
+
+        const filesToReview = results.map((result, index) => {
+            const path = paths[index];
+            if (result.status === 'fulfilled') {
+                return { path, content: result.value };
+            } else {
+                const errorMessage = result.reason instanceof Error ? result.reason.message : 'An unknown error occurred.';
+                return { path, content: '', error: errorMessage };
+            }
+        });
+
         setFilesForReview(filesToReview);
         setSelectedFilePaths(new Set());
-    } catch (err) {
-        setError(err instanceof Error ? err.message : 'An unknown error occurred while fetching file content.');
-        setFilesForReview(null);
     } finally {
         setIsFetchingContent(false);
     }
@@ -168,9 +175,11 @@ export default function App(): React.ReactElement {
         </div>
 
         <div className="lg:w-3/4">
-           {error && <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg mb-4">{error}</div>}
+           {error && !filesForReview && <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg mb-4">{error}</div>}
            {filesForReview ? (
-             <CodeReviewer files={filesForReview} onReset={handleResetReview} />
+             <ErrorBoundary onReset={handleResetReview}>
+               <CodeReviewer files={filesForReview} onReset={handleResetReview} />
+             </ErrorBoundary>
            ) : (
               <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
                 <InfoIcon className="h-12 w-12 mb-4" />
