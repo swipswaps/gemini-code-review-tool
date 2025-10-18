@@ -1,5 +1,3 @@
-
-
 import React, { useReducer, useCallback, useEffect } from 'react';
 import type { RepoTreeNode, HolisticAnalysisResult, RepoFileWithContent } from './types';
 import { fetchRepoTree, fetchAllFileContents, fetchFileContent, parseGitHubUrl } from './services/githubService';
@@ -192,7 +190,10 @@ export default function App(): React.ReactElement {
     if (status === 'reviewing_files' && filesForReview) {
       return (
         <ErrorBoundary onReset={() => dispatch({ type: 'RESET' })}>
-          <CodeReviewer files={filesForReview} onReset={() => dispatch({ type: 'RESET' })} />
+          <CodeReviewer 
+            files={filesForReview} 
+            onReset={() => dispatch({ type: 'RESET' })} 
+          />
         </ErrorBoundary>
       );
     }
@@ -220,7 +221,6 @@ export default function App(): React.ReactElement {
             />
         );
      }
-    // Fix: Handle loading states to show a spinner instead of the default panel.
     if (status === 'loading_repo' || status === 'fetching_files') {
         return (
             <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
@@ -231,7 +231,6 @@ export default function App(): React.ReactElement {
             </div>
         );
     }
-    // Fix: Removed a confusing comment about a type error that was likely outdated. The `if (error)` check is correct.
     if (error) {
         return <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg">{error}</div>
     }
@@ -247,9 +246,6 @@ export default function App(): React.ReactElement {
     );
   };
   
-  // Fix for error on line 283: The `isLoading` constant was removed because it was unused and causing a TypeScript error.
-  // Loading states are handled directly using the `status` variable within the JSX below.
-
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans flex flex-col">
       <header className="bg-gray-800/50 backdrop-blur-sm border-b border-gray-700 p-4 shadow-lg sticky top-0 z-10">
@@ -281,7 +277,6 @@ export default function App(): React.ReactElement {
                     <div className="p-4 border-b border-gray-700">
                         <button
                             onClick={handleStartRepoAnalysis}
-                            // Fix: Removed `|| status === 'loading_repo'` check, which is invalid in this code branch due to TypeScript's control flow analysis and caused a type error. The button is not rendered in the 'loading_repo' state anyway.
                             disabled={status === 'analyzing_repo'}
                             className="w-full bg-indigo-600 text-white font-semibold rounded-md px-4 py-2 hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors duration-200 flex items-center justify-center"
                         >
