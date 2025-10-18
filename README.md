@@ -93,14 +93,23 @@ You'll need `vite` to run the development server. Initialize a `package.json` if
 npm install vite
 ```
 
-### 3. Set Up Your Gemini API Key
+### 3. Set Up Your API Keys
 
+#### a) Gemini API Key
 1.  Go to [Google AI Studio](https://aistudio.google.com/app/apikey) and create an API key.
 2.  Create a file named `.env` in the root of the project and add your key:
     ```
     # .env
     API_KEY=YOUR_GEMINI_API_KEY_HERE
     ```
+
+#### b) GitHub Personal Access Token (Recommended)
+The GitHub API has strict rate limits for unauthenticated requests. To avoid these limits, especially when analyzing entire repositories, you should use a Personal Access Token.
+
+1. Go to your [GitHub Developer Settings](https://github.com/settings/tokens?type=beta) to create a new token.
+2. Configure the token with `public_repo` access. This is all the permission the application needs.
+3. Copy the token and paste it into the "GitHub Personal Access Token" field in the application's UI. The token is only stored in your browser's memory for the current session and is not saved anywhere else.
+
 
 ### 4. Configure Vite
 
@@ -142,7 +151,9 @@ export default defineConfig(({ mode }) => {
 
 ## User Guide
 
-1.  **Enter Repository URL:** In the input box at the top left, enter the full URL of a **public** GitHub repository. The app will automatically fetch the file tree.
+1.  **Enter Repository URL & Token:**
+    - In the input box at the top left, enter the full URL of a **public** GitHub repository. The app will automatically fetch the file tree.
+    - Paste your GitHub Personal Access Token into the field below the URL to avoid API rate limits.
 2.  **Choose an Analysis Mode:**
     -   **Holistic Analysis:** Click the **"Analyze Entire Repository"** button for a high-level architectural review. This may take a minute as it fetches and analyzes the entire codebase.
     -   **File-Specific Review:** Use the checkboxes in the file browser to select one or more files, then click the **"Review Selected"** button.

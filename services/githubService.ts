@@ -1,4 +1,3 @@
-
 import type { RepoTreeNode, RepoTreeFolder, RepoTreeFile } from '../types';
 
 const API_BASE = 'https://api.github.com';
@@ -67,22 +66,28 @@ const buildTree = (files: { path: string }[]): RepoTreeNode[] => {
 
 
 // Fetches the file tree for a repository
-export const fetchRepoTree = async (repoUrl: string): Promise<RepoTreeNode[]> => {
+export const fetchRepoTree = async (repoUrl: string, token?: string): Promise<RepoTreeNode[]> => {
   const parsed = parseGitHubUrl(repoUrl);
   if (!parsed) {
     throw new Error('Invalid GitHub repository URL.');
   }
   const { owner, repo } = parsed;
 
-  const repoInfoResponse = await fetch(`${API_BASE}/repos/${owner}/${repo}`);
+  const headers: HeadersInit = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const repoInfoResponse = await fetch(`${API_BASE}/repos/${owner}/${repo}`, { headers });
   if (!repoInfoResponse.ok) {
     if (repoInfoResponse.status === 404) throw new Error('Repository not found. Is it public?');
+    if (repoInfoResponse.status === 403) throw new Error('GitHub API rate limit exceeded. Please provide a Personal Access Token.');
     throw new Error(`Failed to fetch repository info (status: ${repoInfoResponse.status}).`);
   }
   const repoInfo = await repoInfoResponse.json();
   const defaultBranch = repoInfo.default_branch;
 
-  const treeResponse = await fetch(`${API_BASE}/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`);
+  const treeResponse = await fetch(`${API_BASE}/repos/${owner}/${repo}/git/trees/${defaultBranch}?recursive=1`, { headers });
   if (!treeResponse.ok) {
     throw new Error(`Failed to fetch repository file tree (status: ${treeResponse.status}).`);
   }
@@ -104,10 +109,16 @@ export const fetchRepoTree = async (repoUrl: string): Promise<RepoTreeNode[]> =>
 };
 
 // Fetches the content of a single file
-export const fetchFileContent = async (owner: string, repo: string, path: string): Promise<string> => {
-    const contentResponse = await fetch(`${API_BASE}/repos/${owner}/${repo}/contents/${path}`);
+export const fetchFileContent = async (owner: string, repo: string, path: string, token?: string): Promise<string> => {
+    const headers: HeadersInit = {};
+    if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+    }
+    
+    const contentResponse = await fetch(`${API_BASE}/repos/${owner}/${repo}/contents/${path}`, { headers });
     
     if (!contentResponse.ok) {
+        if (contentResponse.status === 403) throw new Error('GitHub API rate limit exceeded. Please provide a Personal Access Token.');
         throw new Error(`Failed to fetch file content for ${path} (status: ${contentResponse.status})`);
     }
 
@@ -147,7 +158,8 @@ const getAllFilePaths = (nodes: RepoTreeNode[]): string[] => {
 export const fetchAllFileContents = async (
   owner: string,
   repo: string,
-  tree: RepoTreeNode[]
+  tree: RepoTreeNode[],
+  token?: string
 ): Promise<{ path: string; content: string }[]> => {
   let filePaths = getAllFilePaths(tree);
   
@@ -157,7 +169,7 @@ export const fetchAllFileContents = async (
   }
 
   const contentPromises = filePaths.map(path => 
-    fetchFileContent(owner, repo, path)
+    fetchFileContent(owner, repo, path, token)
       .then(content => ({ path, content }))
       .catch(error => {
         console.error(`Skipping file ${path} due to fetch error:`, error);

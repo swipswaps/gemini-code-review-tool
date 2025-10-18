@@ -1,6 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import type { RepoTreeNode, HolisticAnalysisResult } from './types';
-// FIX: Import 'fetchFileContent' to be used when reviewing individual files.
 import { fetchRepoTree, fetchAllFileContents, fetchFileContent } from './services/githubService';
 import { analyzeRepositoryHolistically } from './services/geminiService';
 import { RepoInput } from './components/RepoInput';
@@ -26,6 +25,7 @@ const parseGitHubUrl = (url: string): { owner: string; repo: string } | null => 
 
 export default function App(): React.ReactElement {
   const [repoUrl, setRepoUrl] = useState<string>('https://github.com/microsoft/TypeScript-Node-Starter');
+  const [githubToken, setGithubToken] = useState<string>('');
   const [files, setFiles] = useState<RepoTreeNode[]>([]);
   const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(new Set());
   const [filesForReview, setFilesForReview] = useState<{ path: string; content: string; error?: string }[] | null>(null);
@@ -57,7 +57,7 @@ export default function App(): React.ReactElement {
     setHolisticAnalysisResult(null);
 
     try {
-      const fetchedTree = await fetchRepoTree(urlToFetch);
+      const fetchedTree = await fetchRepoTree(urlToFetch, githubToken);
       setFiles(fetchedTree);
        if (fetchedTree.length === 0) {
         setError('No files found in this repository. Check the console for more details.');
@@ -68,7 +68,7 @@ export default function App(): React.ReactElement {
     } finally {
       setIsLoadingRepo(false);
     }
-  }, []);
+  }, [githubToken]);
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -110,7 +110,7 @@ export default function App(): React.ReactElement {
 
     try {
         const paths = Array.from(selectedFilePaths);
-        const contentPromises = paths.map(path => fetchFileContent(owner, repo, path));
+        const contentPromises = paths.map(path => fetchFileContent(owner, repo, path, githubToken));
         
         const results = await Promise.allSettled(contentPromises);
 
@@ -130,7 +130,7 @@ export default function App(): React.ReactElement {
     } finally {
         setIsFetchingContent(false);
     }
-  }, [repoUrl, selectedFilePaths]);
+  }, [repoUrl, selectedFilePaths, githubToken]);
 
   const handleStartRepoAnalysis = useCallback(async () => {
     if (files.length === 0 || !repoUrl) return;
@@ -149,7 +149,7 @@ export default function App(): React.ReactElement {
 
     try {
       setRepoAnalysisStatusText('Fetching all file contents...');
-      const fetchedContents = await fetchAllFileContents(owner, repo, files);
+      const fetchedContents = await fetchAllFileContents(owner, repo, files, githubToken);
       setAllFilesWithContent(fetchedContents);
 
       setRepoAnalysisStatusText('Analyzing repository with Gemini...');
@@ -163,7 +163,7 @@ export default function App(): React.ReactElement {
       setIsAnalyzingRepo(false);
       setRepoAnalysisStatusText('');
     }
-  }, [files, repoUrl]);
+  }, [files, repoUrl, githubToken]);
 
   const handleReset = () => {
     setFilesForReview(null);
@@ -190,6 +190,8 @@ export default function App(): React.ReactElement {
           <RepoInput
             repoUrl={repoUrl}
             setRepoUrl={setRepoUrl}
+            githubToken={githubToken}
+            setGithubToken={setGithubToken}
             isLoading={isLoadingRepo}
           />
           <div className="bg-gray-800/50 rounded-lg border border-gray-700 flex flex-col flex-grow min-h-0">
