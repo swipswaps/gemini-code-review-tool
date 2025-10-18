@@ -128,3 +128,42 @@ export const fetchFileContent = async (owner: string, repo: string, path: string
         throw new Error(`Failed to decode file content for ${path}.`);
     }
 };
+
+// Helper function to flatten the tree and get all file paths
+const getAllFilePaths = (nodes: RepoTreeNode[]): string[] => {
+  const paths: string[] = [];
+  const traverse = (node: RepoTreeNode) => {
+    if (node.type === 'file') {
+      paths.push(node.path);
+    } else if (node.type === 'folder') {
+      node.children.forEach(traverse);
+    }
+  };
+  nodes.forEach(traverse);
+  return paths;
+};
+
+// Fetches the content for all files in the repository tree
+export const fetchAllFileContents = async (
+  owner: string,
+  repo: string,
+  tree: RepoTreeNode[]
+): Promise<{ path: string; content: string }[]> => {
+  let filePaths = getAllFilePaths(tree);
+  
+  if (filePaths.length > 100) {
+    console.warn(`Repository has ${filePaths.length} files. Limiting analysis to the first 100 files to avoid performance issues.`);
+    filePaths = filePaths.slice(0, 100);
+  }
+
+  const contentPromises = filePaths.map(path => 
+    fetchFileContent(owner, repo, path)
+      .then(content => ({ path, content }))
+      .catch(error => {
+        console.error(`Skipping file ${path} due to fetch error:`, error);
+        return { path, content: `// Error fetching content: ${(error as Error).message}` };
+      })
+  );
+  
+  return Promise.all(contentPromises);
+};

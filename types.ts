@@ -18,3 +18,26 @@ export interface ReviewResult {
   reviewComments: string;
   correctedCode: string;
 }
+
+export interface SuggestedFix {
+  filePath: string;
+  description: string;
+  correctedCode: string;
+}
+
+export interface ErrorTrend {
+  trendDescription: string;
+  filesAffected: string[];
+}
+
+export interface DependencyReview {
+  analysis: string;
+  suggestions: string[];
+}
+
+export interface HolisticAnalysisResult {
+  overallAnalysis: string;
+  dependencyReview: DependencyReview;
+  errorTrends: ErrorTrend[];
+  suggestedFixes: SuggestedFix[];
+}

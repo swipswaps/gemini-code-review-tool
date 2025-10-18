@@ -5,44 +5,36 @@ An automated code review tool that uses the Gemini API to analyze files from pub
 ## Key Features
 
 - **Direct GitHub Integration:** Fetches and displays files directly from any public GitHub repository using the GitHub REST API.
+- **Deep Repository Analysis:** Go beyond single files with a holistic architectural review. The tool analyzes the entire codebase to identify cross-cutting concerns, dependency issues, and common error patterns, presenting the results in an interactive, multi-section report.
 - **Multi-File Review & Formatting:** Select multiple files for a batch review, with each file's results displayed in a convenient accordion view. Includes a one-click "Auto-Fix & Format" feature for quick cleanups.
 - **AI-Powered Code Analysis:** Leverages the advanced reasoning of the Gemini 2.5 Pro model to perform in-depth code reviews, checking for bugs, performance issues, security vulnerabilities, and adherence to best practices.
-- **Interactive Feedback:** Review comments are interactive. Click on a line number reference (e.g., `L15-18`) in a comment, and the corresponding lines of code will instantly be highlighted in the diff viewer above.
-- **Seamless Streaming Experience:** Provides a live, streaming view of the AI's "thought process" within a persistent UI, offering a superior and more transparent user experience than a simple loading spinner.
+- **Interactive Feedback with Diffs:** Review comments and architectural suggestions are interactive. For single-file reviews, click on a line number reference (e.g., `L15-18`) to highlight the code. For the repository analysis, each suggested fix comes with its own side-by-side diff view.
 - **Side-by-Side Diff Viewer:** Renders suggested corrections in a clean, side-by-side diff format with line numbers and intuitive color-coding, making it easy to understand the proposed changes.
 - **Modern & Resilient UI:** Built with React, TypeScript, and Tailwind CSS for a clean, performant, and responsive user experience. Includes error boundaries to gracefully handle runtime errors without crashing the application.
 
 ## How It Works: A Deep Dive
 
-The application is a client-side React application that orchestrates two main external services: the GitHub API and the Gemini API. Here’s a detailed breakdown of the workflow.
+The application is a client-side React application that orchestrates two main external services: the GitHub API and the Gemini API. There are two primary analysis modes.
 
-### 1. Fetching Repository Files (`services/githubService.ts`)
+### 1. Multi-File Code Review (`components/CodeReviewer.tsx`)
 
-When a user enters a GitHub repository URL, the application automatically initiates a debounced fetch process:
+This mode is for deep-diving into specific files.
 
-1.  **URL Parsing & Tree Construction:** The URL is parsed to extract the `owner` and `repo`. The application fetches the entire file list using the GitHub Git Trees API (`?recursive=1`), then intelligently constructs a hierarchical folder and file tree from the flat list of paths.
-2.  **File Content Fetching:** When a user starts a review, a request is made to the Contents API endpoint (`/repos/{owner}/{repo}/contents/{path}`) for each selected file. This endpoint returns the file's content as a base64-encoded string, which the application decodes (`atob()`) into plain text for analysis. The process uses `Promise.allSettled` to handle errors gracefully, so one failed file won't stop an entire batch review.
+- **File Fetching (`services/githubService.ts`):** When a user selects files and starts a review, a request is made to the GitHub Contents API for each file. The base64 content is decoded into plain text.
+- **Streaming Analysis (`services/geminiService.ts`):** The content of each file is sent to the Gemini 2.5 Pro model via a streaming request. The prompt instructs the model to act as a senior engineer, provide markdown-formatted comments, and wrap line numbers in special tags (`<span data-lines="...">`) for interactivity. It must also provide the full corrected code after a separator token.
+- **Interactive Display (`components/DiffViewer.tsx`, `components/ReviewComments.tsx`):** The UI displays the AI's "thought process" as it streams in. Once complete, the final comments are formatted and the diff view is populated by comparing the original and AI-corrected code.
 
-### 2. AI-Powered Analysis (`services/geminiService.ts`)
+### 2. Holistic Repository Analysis (`components/RepoAnalyzer.tsx`)
 
-The core of the application lies in its interaction with the Gemini API.
+This mode provides a high-level, architectural overview of the entire project.
 
-1.  **Prompt Engineering:** The file's content and path are embedded into a carefully crafted prompt. This prompt instructs the Gemini model to act as an **expert senior software engineer** and provides clear criteria for the review. Crucially, it asks the model to wrap any line number references in a special HTML tag (e.g., `<span data-lines="15-18">L15-18</span>`) to make its output machine-readable for the interactive highlighting feature.
-2.  **Streaming for Real-Time Feedback:** The app uses the `gemini-2.5-pro` model's streaming capabilities (`generateContentStream`). This allows the app to receive the model's response in chunks as it's generated, rather than waiting for the entire review to complete.
-3.  **Structured Output:** The prompt explicitly asks the model to structure its output in two parts, separated by a unique token (`<<CODE_SEPARATOR>>`):
-    *   **Part 1: Review Comments:** A detailed, markdown-formatted explanation of the identified issues.
-    *   **Part 2: Corrected Code:** The full, corrected version of the code.
-
-### 3. The Code Review Lifecycle (`components/CodeReviewer.tsx`)
-
-This component manages the multi-file review lifecycle in an accordion interface.
-
--   **Review in Progress:** When a review is initiated, the main view locks into a consistent layout. For each file, a **Review Comments** panel appears, showing the AI's "thought process" streaming in real-time, providing immediate feedback. Above it, a **Diff Viewer** shows the original code.
--   **Review Complete:** Once the stream for a file ends, the UI smoothly transitions. The **Review Comments** panel formats the streamed text into readable, structured markdown using the `marked` library. The **Diff Viewer** updates to show a side-by-side comparison of the original code and the AI's corrected version. This persistent layout avoids jarring UI shifts and keeps the context visible throughout the review.
-
-### 4. Displaying the Results (`components/DiffViewer.tsx`)
-
-To present the code changes clearly, the `DiffViewer` component performs a line-by-line comparison using the `diff` library. It renders two panels, "Original" and "Corrected," with line numbers. It intelligently adds blank lines to ensure that corresponding code blocks remain aligned, and it highlights lines in green (additions) or red (removals) for an intuitive visual representation.
+1.  **Fetch Entire Codebase:** The application first fetches the content of every file in the repository (up to a safety limit).
+2.  **Holistic Prompting & JSON Output:** All the file contents are concatenated into a single, massive prompt. The Gemini 2.5 Pro model is instructed to act as a **solution architect** and return a structured **JSON object** containing its full analysis. This ensures a reliable, machine-readable response.
+3.  **Interactive Report:** The `RepoAnalyzer` component receives this JSON object and renders a comprehensive, multi-part report including:
+    -   An overall architectural summary.
+    -   A review of the project's dependencies.
+    -   A list of common error trends or anti-patterns observed across the codebase.
+    -   An accordion of specific, file-by-file suggested fixes, each with its own description and side-by-side **diff view**.
 
 ## Project Structure
 
@@ -52,10 +44,11 @@ The project is organized into a logical structure to separate concerns.
 /
 ├── components/            # Reusable React components
 │   ├── icons/             # SVG icon components
-│   ├── CodeReviewer.tsx     # Main component for managing the multi-file review accordion
-│   ├── DiffViewer.tsx       # Component for showing side-by-side code differences
+│   ├── CodeReviewer.tsx     # Manages the multi-file review accordion
+│   ├── DiffViewer.tsx       # Shows side-by-side code differences
 │   ├── ErrorBoundary.tsx    # Catches runtime errors to prevent app crashes
 │   ├── FileBrowser.tsx      # Renders the interactive repository file tree
+│   ├── RepoAnalyzer.tsx     # Renders the holistic, multi-part repository analysis report
 │   ├── RepoInput.tsx        # Component for GitHub URL input
 │   ├── ReviewComments.tsx   # Displays streaming thought process and final formatted review
 │   └── Spinner.tsx          # Loading spinner component
@@ -64,7 +57,10 @@ The project is organized into a logical structure to separate concerns.
 │   ├── geminiService.ts     # Logic for calling the Gemini API
 │   └── githubService.ts     # Logic for calling the GitHub API
 │
-├── App.tsx                # Main application component, manages state
+├── utils/                 # Utility functions
+│   └── constants.ts       # Shared constants like API tokens
+│
+├── App.tsx                # Main application component, manages state and review modes
 ├── index.html             # The entry point HTML file
 ├── index.tsx              # React application root
 ├── types.ts               # TypeScript type definitions for the project
@@ -147,13 +143,10 @@ export default defineConfig(({ mode }) => {
 ## User Guide
 
 1.  **Enter Repository URL:** In the input box at the top left, enter the full URL of a **public** GitHub repository. The app will automatically fetch the file tree.
-2.  **Select Files:** Use the checkboxes in the file browser to select one or more files you want to review.
-3.  **Start Review:** Click the **"Review Selected"** button at the bottom of the file browser.
-4.  **Observe the Process:** The main view will populate with an accordion. Each selected file has its own collapsible section with a status indicator. The review process for all files starts automatically.
-5.  **Analyze the Results:**
-    -   Click on a file's header in the accordion to expand its review panel.
-    -   Watch as the "thought process" comments are streamed in real-time.
-    -   Once complete, the comments will be formatted, and the side-by-side diff will show the proposed changes.
-    -   Click on line number references like `[L15-18]` in the comments to highlight the code in the diff viewer.
-    -   Use the **"Auto-Fix & Format"** button for quick stylistic cleanups.
-6.  **Start a New Review:** Click the **"New Review"** button to clear the results and select new files.
+2.  **Choose an Analysis Mode:**
+    -   **Holistic Analysis:** Click the **"Analyze Entire Repository"** button for a high-level architectural review. This may take a minute as it fetches and analyzes the entire codebase.
+    -   **File-Specific Review:** Use the checkboxes in the file browser to select one or more files, then click the **"Review Selected"** button.
+3.  **Analyze the Results:**
+    -   For a repository analysis, explore the different sections of the report. Expand the "Suggested Fixes" to see descriptions and side-by-side diffs.
+    -   For file reviews, expand each file's accordion panel to see the diff and the AI's comments. Click on line number references like `[L15-18]` in the comments to highlight the code.
+4.  **Start a New Review:** Click the **"New Review"** button to clear the results and return to the file browser.

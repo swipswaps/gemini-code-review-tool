@@ -1,5 +1,6 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { CODE_SEPARATOR } from '../utils/constants';
+import type { HolisticAnalysisResult } from '../types';
 
 const API_KEY = process.env.API_KEY;
 
@@ -99,40 +100,84 @@ export async function lintCode(code: string, fileName: string): Promise<string> 
   }
 }
 
-export async function* analyzeRepoStructureStream(fileTree: string): AsyncGenerator<string> {
-  try {
-    const prompt = `
-      You are an expert solution architect and senior software engineer.
-      Your task is to perform a high-level architectural review of a project based on its file and directory structure.
+export const analyzeRepositoryHolistically = async (
+  files: { path: string; content: string }[]
+): Promise<HolisticAnalysisResult> => {
+    try {
+        const fileContentsString = files.map(f => `
+// FILE: ${f.path}
+// --- START OF FILE ---
+${f.content}
+// --- END OF FILE ---
+`).join('\n\n---\n\n');
 
-      Analyze the following file tree and provide a detailed, markdown-formatted report covering:
-      - **Overall Architecture:** What is the likely architecture (e.g., component-based, MVC)? Is it appropriate for a modern web application?
-      - **Code Organization:** Is the code well-organized? Is there a clear separation of concerns (e.g., components, services, types, utils)?
-      - **Naming Conventions:** Are the file and folder names clear, consistent, and descriptive?
-      - **Potential Issues & "Code Smells":** Based on the structure, identify any potential red flags. For example, are there overly large components, a messy root directory, or a lack of modularity?
-      - **Suggestions for Improvement:** Provide actionable recommendations for refactoring, reorganization, or further investigation.
+        const prompt = `
+            You are an expert solution architect and senior software engineer conducting a holistic audit of an entire codebase.
+            I will provide you with the contents of all the files in the repository.
 
-      Do not review the content of the files, only the structure. Provide your analysis as a comprehensive report.
+            Your task is to perform a comprehensive analysis and return a JSON object with your findings. The JSON object must conform to the specified schema.
 
-      Here is the file tree to analyze:
-      \`\`\`
-      ${fileTree}
-      \`\`\`
-    `;
+            Your analysis should cover these key areas:
+            1.  **Overall Analysis:** A high-level summary of the repository's architecture, purpose, strengths, and major weaknesses.
+            2.  **Dependency Review:** If a package.json or similar dependency file is present, analyze the dependencies. Look for outdated packages, security vulnerabilities, or questionable choices. Provide a summary and a list of suggestions.
+            3.  **Error Trends:** Identify recurring problems, anti-patterns, or "code smells" that appear across multiple files. For each trend, describe it and list the files where it was observed.
+            4.  **Suggested Fixes:** Provide a list of concrete, actionable fixes for specific files. For each fix, specify the file path, a clear description of the issue and your proposed change, and the complete, corrected code for that file. The corrected code should be a drop-in replacement.
 
-    const responseStream = await ai.models.generateContentStream({
-      model: "gemini-2.5-pro",
-      contents: prompt,
-    });
-    
-    for await (const chunk of responseStream) {
-        if (chunk.text) {
-            yield chunk.text;
-        }
+            Here is the codebase:
+            ${fileContentsString}
+        `;
+
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-pro",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        overallAnalysis: { type: Type.STRING },
+                        dependencyReview: {
+                            type: Type.OBJECT,
+                            properties: {
+                                analysis: { type: Type.STRING },
+                                suggestions: { type: Type.ARRAY, items: { type: Type.STRING } }
+                            },
+                             required: ["analysis"]
+                        },
+                        errorTrends: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    trendDescription: { type: Type.STRING },
+                                    filesAffected: { type: Type.ARRAY, items: { type: Type.STRING } }
+                                },
+                                required: ["trendDescription", "filesAffected"]
+                            }
+                        },
+                        suggestedFixes: {
+                            type: Type.ARRAY,
+                            items: {
+                                type: Type.OBJECT,
+                                properties: {
+                                    filePath: { type: Type.STRING },
+                                    description: { type: Type.STRING },
+                                    correctedCode: { type: Type.STRING }
+                                },
+                                required: ["filePath", "description", "correctedCode"]
+                            }
+                        }
+                    },
+                    required: ["overallAnalysis", "dependencyReview", "errorTrends", "suggestedFixes"]
+                }
+            }
+        });
+
+        const jsonText = response.text.trim();
+        return JSON.parse(jsonText) as HolisticAnalysisResult;
+
+    } catch (error) {
+        console.error("Error analyzing repository holistically:", error);
+        throw new Error("Failed to get repository analysis from Gemini API. The model may have returned an invalid JSON structure.");
     }
-
-  } catch (error) {
-    console.error("Error analyzing repo structure:", error);
-    throw new Error("Failed to get repository analysis from Gemini API.");
-  }
-}
+};

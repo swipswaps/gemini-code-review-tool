@@ -1,8 +1,8 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import type { RepoTreeNode } from './types';
-import { fetchRepoTree, fetchFileContent } from './services/githubService';
-import { analyzeRepoStructureStream } from './services/geminiService';
-import { serializeTree } from './utils/treeSerializer';
+import type { RepoTreeNode, HolisticAnalysisResult } from './types';
+// FIX: Import 'fetchFileContent' to be used when reviewing individual files.
+import { fetchRepoTree, fetchAllFileContents, fetchFileContent } from './services/githubService';
+import { analyzeRepositoryHolistically } from './services/geminiService';
 import { RepoInput } from './components/RepoInput';
 import { FileBrowser } from './components/FileBrowser';
 import { CodeReviewer } from './components/CodeReviewer';
@@ -35,8 +35,11 @@ export default function App(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
 
   const [reviewMode, setReviewMode] = useState<'file' | 'repo' | null>(null);
-  const [repoAnalysisStream, setRepoAnalysisStream] = useState<string>('');
+  const [holisticAnalysisResult, setHolisticAnalysisResult] = useState<HolisticAnalysisResult | null>(null);
+  const [allFilesWithContent, setAllFilesWithContent] = useState<{ path: string; content: string }[] | null>(null);
   const [isAnalyzingRepo, setIsAnalyzingRepo] = useState<boolean>(false);
+  const [repoAnalysisStatusText, setRepoAnalysisStatusText] = useState<string>('');
+
 
   const handleFetchFiles = useCallback(async (urlToFetch: string) => {
     const parsed = parseGitHubUrl(urlToFetch);
@@ -51,7 +54,7 @@ export default function App(): React.ReactElement {
     setSelectedFilePaths(new Set());
     setFiles([]);
     setReviewMode(null);
-    setRepoAnalysisStream('');
+    setHolisticAnalysisResult(null);
 
     try {
       const fetchedTree = await fetchRepoTree(urlToFetch);
@@ -130,33 +133,45 @@ export default function App(): React.ReactElement {
   }, [repoUrl, selectedFilePaths]);
 
   const handleStartRepoAnalysis = useCallback(async () => {
-    if (files.length === 0) return;
+    if (files.length === 0 || !repoUrl) return;
+
+    const parsed = parseGitHubUrl(repoUrl);
+    if (!parsed) {
+        setError('Cannot analyze repository: Invalid GitHub URL.');
+        return;
+    }
+    const { owner, repo } = parsed;
     
     setReviewMode('repo');
     setIsAnalyzingRepo(true);
-    setRepoAnalysisStream('');
+    setHolisticAnalysisResult(null);
     setError(null);
 
     try {
-      const treeString = serializeTree(files);
-      const stream = analyzeRepoStructureStream(treeString);
-      for await (const chunk of stream) {
-        setRepoAnalysisStream(prev => prev + chunk);
-      }
+      setRepoAnalysisStatusText('Fetching all file contents...');
+      const fetchedContents = await fetchAllFileContents(owner, repo, files);
+      setAllFilesWithContent(fetchedContents);
+
+      setRepoAnalysisStatusText('Analyzing repository with Gemini...');
+      const result = await analyzeRepositoryHolistically(fetchedContents);
+      setHolisticAnalysisResult(result);
+
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setError(errorMessage);
     } finally {
       setIsAnalyzingRepo(false);
+      setRepoAnalysisStatusText('');
     }
-  }, [files]);
+  }, [files, repoUrl]);
 
   const handleReset = () => {
     setFilesForReview(null);
     setReviewMode(null);
-    setRepoAnalysisStream('');
+    setHolisticAnalysisResult(null);
     setIsAnalyzingRepo(false);
     setError(null);
+    setAllFilesWithContent(null);
   };
 
   return (
@@ -191,7 +206,12 @@ export default function App(): React.ReactElement {
                             disabled={isAnalyzingRepo || isLoadingRepo}
                             className="w-full bg-indigo-600 text-white font-semibold rounded-md px-4 py-2 hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors duration-200 flex items-center justify-center"
                         >
-                            {isAnalyzingRepo ? <Spinner className="w-5 h-5"/> : 'Analyze Entire Repository'}
+                            {isAnalyzingRepo ? (
+                              <>
+                                <Spinner className="w-5 h-5 mr-2"/> 
+                                <span>{repoAnalysisStatusText || 'Analyzing...'}</span>
+                              </>
+                            ) : 'Analyze Entire Repository'}
                         </button>
                     </div>
                     <FileBrowser nodes={files} selectedFilePaths={selectedFilePaths} onToggleFile={handleToggleFileSelection} />
@@ -228,8 +248,10 @@ export default function App(): React.ReactElement {
            ) : reviewMode === 'repo' ? (
              <ErrorBoundary onReset={handleReset}>
                 <RepoAnalyzer 
-                    analysisStream={repoAnalysisStream}
-                    isStreaming={isAnalyzingRepo}
+                    analysisResult={holisticAnalysisResult}
+                    originalFiles={allFilesWithContent}
+                    isLoading={isAnalyzingRepo}
+                    statusText={repoAnalysisStatusText}
                     onReset={handleReset}
                 />
              </ErrorBoundary>
