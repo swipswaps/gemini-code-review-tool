@@ -247,7 +247,8 @@ export default function App(): React.ReactElement {
     );
   };
   
-  const isLoading = status === 'loading_repo' || status === 'fetching_files';
+  // Fix for error on line 283: The `isLoading` constant was removed because it was unused and causing a TypeScript error.
+  // Loading states are handled directly using the `status` variable within the JSX below.
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans flex flex-col">
