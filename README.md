@@ -69,7 +69,7 @@ The project is organized into a logical structure to separate concerns.
 
 ## Installation and Setup Guide
 
-This project is a static web application and can be run with any simple HTTP server. However, it relies on a `process.env.GEMINI_API_KEY` environment variable being available in the browser context, which standard static servers do not provide. The setup below includes using `Vite` as a development server because it can easily handle this requirement without modifying the application's source code.
+This project is a static web application and can be run with any simple HTTP server. However, it relies on a `process.env.API_KEY` environment variable being available in the browser context, which standard static servers do not provide. The setup below includes using `Vite` as a development server because it can easily handle this requirement without modifying the application's source code.
 
 ### Prerequisites
 
@@ -107,7 +107,7 @@ npm install vite
 2.  Create a file named `.env` in the root of the project and add your key:
     ```
     # .env
-    GEMINI_API_KEY=YOUR_GEMINI_API_KEY_HERE
+    API_KEY=YOUR_GEMINI_API_KEY_HERE
     ```
 
 #### b) GitHub Personal Access Token (Recommended)
@@ -120,7 +120,7 @@ The GitHub API has strict rate limits for unauthenticated requests. To avoid the
 
 ### 4. Configure Vite
 
-Create a `vite.config.js` file in the project root. This configuration will make the environment variable from your `.env` file available as `process.env.GEMINI_API_KEY` in the browser.
+Create a `vite.config.js` file in the project root. This configuration will make the environment variable from your `.env` file available as `process.env.API_KEY` in the browser.
 
 ```javascript
 // vite.config.js
@@ -130,12 +130,12 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     define: {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+      'process.env.API_KEY': JSON.stringify(env.API_KEY)
     }
   }
 });
 ```
-*This configuration tells Vite to find `GEMINI_API_KEY` in your `.env` file and replace any occurrence of `process.env.GEMINI_API_KEY` in the code with the actual key string during development.*
+*This configuration tells Vite to find `API_KEY` in your `.env` file and replace any occurrence of `process.env.API_KEY` in the code with the actual key string during development.*
 
 ### 5. Run the Development Server
 

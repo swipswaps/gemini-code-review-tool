@@ -2,10 +2,10 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { CODE_SEPARATOR } from '../utils/constants';
 import type { HolisticAnalysisResult } from '../types';
 
-const API_KEY = process.env.GEMINI_API_KEY;
+const API_KEY = process.env.API_KEY;
 
 if (!API_KEY) {
-  throw new Error("GEMINI_API_KEY environment variable not set");
+  throw new Error("API_KEY environment variable not set. Please create a .env file and add your API_KEY.");
 }
 
 const ai = new GoogleGenAI({ apiKey: API_KEY });
