@@ -1,6 +1,7 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import type { RepoTreeNode, HolisticAnalysisResult } from './types';
-import { fetchRepoTree, fetchAllFileContents, fetchFileContent } from './services/githubService';
+
+import React, { useReducer, useCallback, useEffect } from 'react';
+import type { RepoTreeNode, HolisticAnalysisResult, RepoFileWithContent } from './types';
+import { fetchRepoTree, fetchAllFileContents, fetchFileContent, parseGitHubUrl } from './services/githubService';
 import { analyzeRepositoryHolistically } from './services/geminiService';
 import { RepoInput } from './components/RepoInput';
 import { FileBrowser } from './components/FileBrowser';
@@ -11,168 +12,231 @@ import { GithubIcon } from './components/icons/GithubIcon';
 import { InfoIcon } from './components/icons/InfoIcon';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
-const parseGitHubUrl = (url: string): { owner: string; repo: string } | null => {
-    try {
-        const urlObj = new URL(url);
-        if (urlObj.hostname !== 'github.com') return null;
-        const parts = urlObj.pathname.split('/').filter(Boolean);
-        if (parts.length < 2) return null;
-        return { owner: parts[0], repo: parts[1].replace('.git', '') };
-    } catch (e) {
-        return null;
+type AppState = {
+  status: 'idle' | 'loading_repo' | 'repo_loaded' | 'fetching_files' | 'reviewing_files' | 'analyzing_repo' | 'error';
+  repoUrl: string;
+  githubToken: string;
+  repoTree: RepoTreeNode[];
+  selectedFilePaths: Set<string>;
+  filesForReview: RepoFileWithContent[] | null;
+  holisticAnalysisResult: HolisticAnalysisResult | null;
+  allFilesWithContent: RepoFileWithContent[] | null;
+  repoAnalysisStatusText: string;
+  error: string | null;
+};
+
+type AppAction =
+  | { type: 'SET_REPO_URL'; payload: string }
+  | { type: 'SET_GITHUB_TOKEN'; payload: string }
+  | { type: 'FETCH_REPO_START' }
+  | { type: 'FETCH_REPO_SUCCESS'; payload: RepoTreeNode[] }
+  | { type: 'FETCH_REPO_FAILURE'; payload: string }
+  | { type: 'TOGGLE_FILE_SELECTION'; payload: string }
+  | { type: 'SET_ALL_FILES_SELECTED'; payload: { nodes: RepoTreeNode[]; select: boolean } }
+  | { type: 'CLEAR_SELECTION' }
+  | { type: 'START_FILE_REVIEW' }
+  | { type: 'FILE_REVIEW_SUCCESS'; payload: RepoFileWithContent[] }
+  | { type: 'FILE_REVIEW_FAILURE'; payload: string }
+  | { type: 'START_REPO_ANALYSIS' }
+  | { type: 'REPO_ANALYSIS_STATUS_UPDATE'; payload: string }
+  | { type: 'REPO_ANALYSIS_SUCCESS'; payload: { result: HolisticAnalysisResult; files: RepoFileWithContent[] } }
+  | { type: 'REPO_ANALYSIS_FAILURE'; payload: string }
+  | { type: 'RESET' };
+
+const initialState: AppState = {
+  status: 'idle',
+  repoUrl: 'https://github.com/microsoft/TypeScript-Node-Starter',
+  githubToken: '',
+  repoTree: [],
+  selectedFilePaths: new Set(),
+  filesForReview: null,
+  holisticAnalysisResult: null,
+  allFilesWithContent: null,
+  repoAnalysisStatusText: '',
+  error: null,
+};
+
+const getAllFilePaths = (nodes: RepoTreeNode[]): string[] => {
+  const paths: string[] = [];
+  const traverse = (node: RepoTreeNode) => {
+    if (node.type === 'file') paths.push(node.path);
+    else node.children.forEach(traverse);
+  };
+  nodes.forEach(traverse);
+  return paths;
+};
+
+
+const appReducer = (state: AppState, action: AppAction): AppState => {
+  switch (action.type) {
+    case 'SET_REPO_URL':
+      return { ...state, repoUrl: action.payload };
+    case 'SET_GITHUB_TOKEN':
+      return { ...state, githubToken: action.payload };
+    case 'FETCH_REPO_START':
+      return { ...initialState, repoUrl: state.repoUrl, githubToken: state.githubToken, status: 'loading_repo' };
+    case 'FETCH_REPO_SUCCESS':
+      return { ...state, status: 'repo_loaded', repoTree: action.payload, error: action.payload.length === 0 ? 'No files found in this repository.' : null };
+    case 'FETCH_REPO_FAILURE':
+      return { ...state, status: 'error', error: action.payload, repoTree: [] };
+    case 'TOGGLE_FILE_SELECTION': {
+      const newSet = new Set(state.selectedFilePaths);
+      if (newSet.has(action.payload)) newSet.delete(action.payload);
+      else newSet.add(action.payload);
+      return { ...state, selectedFilePaths: newSet };
     }
+    case 'SET_ALL_FILES_SELECTED': {
+        if (action.payload.select) {
+            const allPaths = getAllFilePaths(action.payload.nodes);
+            return { ...state, selectedFilePaths: new Set(allPaths) };
+        }
+        return { ...state, selectedFilePaths: new Set() };
+    }
+    case 'CLEAR_SELECTION':
+      return { ...state, selectedFilePaths: new Set() };
+    case 'START_FILE_REVIEW':
+      return { ...state, status: 'fetching_files', error: null };
+    case 'FILE_REVIEW_SUCCESS':
+      return { ...state, status: 'reviewing_files', filesForReview: action.payload, selectedFilePaths: new Set() };
+    case 'FILE_REVIEW_FAILURE':
+      return { ...state, status: 'error', error: action.payload };
+    case 'START_REPO_ANALYSIS':
+      return { ...state, status: 'analyzing_repo', holisticAnalysisResult: null, error: null };
+    case 'REPO_ANALYSIS_STATUS_UPDATE':
+      return { ...state, repoAnalysisStatusText: action.payload };
+    case 'REPO_ANALYSIS_SUCCESS':
+      return { ...state, status: 'repo_loaded', holisticAnalysisResult: action.payload.result, allFilesWithContent: action.payload.files };
+    case 'REPO_ANALYSIS_FAILURE':
+      return { ...state, status: 'error', error: action.payload };
+    case 'RESET':
+        const isRepoLoaded = state.repoTree.length > 0;
+        return { ...initialState, repoUrl: state.repoUrl, githubToken: state.githubToken, repoTree: state.repoTree, status: isRepoLoaded ? 'repo_loaded' : 'idle' };
+    default:
+      return state;
+  }
 };
 
 export default function App(): React.ReactElement {
-  const [repoUrl, setRepoUrl] = useState<string>('https://github.com/microsoft/TypeScript-Node-Starter');
-  const [githubToken, setGithubToken] = useState<string>('');
-  const [files, setFiles] = useState<RepoTreeNode[]>([]);
-  const [selectedFilePaths, setSelectedFilePaths] = useState<Set<string>>(new Set());
-  const [filesForReview, setFilesForReview] = useState<{ path: string; content: string; error?: string }[] | null>(null);
-  
-  const [isLoadingRepo, setIsLoadingRepo] = useState<boolean>(false);
-  const [isFetchingContent, setIsFetchingContent] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const [reviewMode, setReviewMode] = useState<'file' | 'repo' | null>(null);
-  const [holisticAnalysisResult, setHolisticAnalysisResult] = useState<HolisticAnalysisResult | null>(null);
-  const [allFilesWithContent, setAllFilesWithContent] = useState<{ path: string; content: string }[] | null>(null);
-  const [isAnalyzingRepo, setIsAnalyzingRepo] = useState<boolean>(false);
-  const [repoAnalysisStatusText, setRepoAnalysisStatusText] = useState<string>('');
-
+  const [state, dispatch] = useReducer(appReducer, initialState);
+  const { status, repoUrl, githubToken, repoTree, selectedFilePaths, filesForReview, holisticAnalysisResult, allFilesWithContent, repoAnalysisStatusText, error } = state;
 
   const handleFetchFiles = useCallback(async (urlToFetch: string) => {
-    const parsed = parseGitHubUrl(urlToFetch);
-    if (!parsed) {
-      setError('Please enter a valid GitHub repository URL.');
-      return;
-    }
-    
-    setIsLoadingRepo(true);
-    setError(null);
-    setFilesForReview(null);
-    setSelectedFilePaths(new Set());
-    setFiles([]);
-    setReviewMode(null);
-    setHolisticAnalysisResult(null);
-
-    try {
-      const fetchedTree = await fetchRepoTree(urlToFetch, githubToken);
-      setFiles(fetchedTree);
-       if (fetchedTree.length === 0) {
-        setError('No files found in this repository. Check the console for more details.');
+    if (parseGitHubUrl(urlToFetch)) {
+      dispatch({ type: 'FETCH_REPO_START' });
+      try {
+        const fetchedTree = await fetchRepoTree(urlToFetch, githubToken);
+        dispatch({ type: 'FETCH_REPO_SUCCESS', payload: fetchedTree });
+      } catch (err) {
+        dispatch({ type: 'FETCH_REPO_FAILURE', payload: err instanceof Error ? err.message : 'An unknown error occurred.' });
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred.');
-      setFiles([]);
-    } finally {
-      setIsLoadingRepo(false);
+    } else {
+      dispatch({ type: 'FETCH_REPO_FAILURE', payload: 'Please enter a valid GitHub repository URL.' });
     }
   }, [githubToken]);
 
   useEffect(() => {
     const handler = setTimeout(() => {
-      if (repoUrl && parseGitHubUrl(repoUrl)) {
-        handleFetchFiles(repoUrl);
-      }
+      if (repoUrl) handleFetchFiles(repoUrl);
     }, 500);
-
-    return () => {
-      clearTimeout(handler);
-    };
-  }, [repoUrl, handleFetchFiles]);
-  
-  const handleToggleFileSelection = useCallback((path: string) => {
-    setSelectedFilePaths(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(path)) {
-        newSet.delete(path);
-      } else {
-        newSet.add(path);
-      }
-      return newSet;
-    });
-  }, []);
+    return () => clearTimeout(handler);
+  }, [repoUrl, githubToken, handleFetchFiles]);
 
   const handleStartReview = useCallback(async () => {
     if (selectedFilePaths.size === 0) return;
-
-    setIsFetchingContent(true);
-    setError(null);
-    
     const parsed = parseGitHubUrl(repoUrl);
     if (!parsed) {
-      setError("Could not parse repository URL to fetch files.");
-      setIsFetchingContent(false);
+      dispatch({ type: 'FILE_REVIEW_FAILURE', payload: "Could not parse repository URL to fetch files." });
       return;
     }
+
+    dispatch({ type: 'START_FILE_REVIEW' });
     const { owner, repo } = parsed;
-
     try {
-        const paths = Array.from(selectedFilePaths);
-        const contentPromises = paths.map(path => fetchFileContent(owner, repo, path, githubToken));
-        
-        const results = await Promise.allSettled(contentPromises);
-
-        const filesToReview = results.map((result, index) => {
-            const path = paths[index];
-            if (result.status === 'fulfilled') {
-                return { path, content: result.value };
-            } else {
-                const errorMessage = result.reason instanceof Error ? result.reason.message : 'An unknown error occurred.';
-                return { path, content: '', error: errorMessage };
-            }
-        });
-
-        setFilesForReview(filesToReview);
-        setSelectedFilePaths(new Set());
-        setReviewMode('file');
-    } finally {
-        setIsFetchingContent(false);
+      const paths = Array.from(selectedFilePaths);
+      const results = await Promise.allSettled(paths.map(path => fetchFileContent(owner, repo, path, githubToken)));
+      const filesToReview = results.map((result, index) => {
+        const path = paths[index];
+        if (result.status === 'fulfilled') return { path, content: result.value };
+        return { path, content: '', error: result.reason instanceof Error ? result.reason.message : 'An unknown error occurred.' };
+      });
+      dispatch({ type: 'FILE_REVIEW_SUCCESS', payload: filesToReview });
+    } catch (err) {
+      dispatch({ type: 'FILE_REVIEW_FAILURE', payload: err instanceof Error ? err.message : 'An unknown error occurred while fetching files.' });
     }
   }, [repoUrl, selectedFilePaths, githubToken]);
 
   const handleStartRepoAnalysis = useCallback(async () => {
-    if (files.length === 0 || !repoUrl) return;
-
+    if (repoTree.length === 0 || !repoUrl) return;
     const parsed = parseGitHubUrl(repoUrl);
     if (!parsed) {
-        setError('Cannot analyze repository: Invalid GitHub URL.');
-        return;
+      dispatch({ type: 'REPO_ANALYSIS_FAILURE', payload: 'Cannot analyze repository: Invalid GitHub URL.' });
+      return;
     }
+
+    dispatch({ type: 'START_REPO_ANALYSIS' });
     const { owner, repo } = parsed;
-    
-    setReviewMode('repo');
-    setIsAnalyzingRepo(true);
-    setHolisticAnalysisResult(null);
-    setError(null);
-
     try {
-      setRepoAnalysisStatusText('Fetching all file contents...');
-      const fetchedContents = await fetchAllFileContents(owner, repo, files, githubToken);
-      setAllFilesWithContent(fetchedContents);
-
-      setRepoAnalysisStatusText('Analyzing repository with Gemini...');
+      dispatch({ type: 'REPO_ANALYSIS_STATUS_UPDATE', payload: 'Fetching all file contents...' });
+      const fetchedContents = await fetchAllFileContents(owner, repo, repoTree, githubToken);
+      
+      dispatch({ type: 'REPO_ANALYSIS_STATUS_UPDATE', payload: 'Analyzing repository with Gemini...' });
       const result = await analyzeRepositoryHolistically(fetchedContents);
-      setHolisticAnalysisResult(result);
-
+      dispatch({ type: 'REPO_ANALYSIS_SUCCESS', payload: { result, files: fetchedContents } });
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
-      setError(errorMessage);
-    } finally {
-      setIsAnalyzingRepo(false);
-      setRepoAnalysisStatusText('');
+      dispatch({ type: 'REPO_ANALYSIS_FAILURE', payload: err instanceof Error ? err.message : 'An unknown error occurred.' });
     }
-  }, [files, repoUrl, githubToken]);
+  }, [repoTree, repoUrl, githubToken]);
 
-  const handleReset = () => {
-    setFilesForReview(null);
-    setReviewMode(null);
-    setHolisticAnalysisResult(null);
-    setIsAnalyzingRepo(false);
-    setError(null);
-    setAllFilesWithContent(null);
+  const renderMainContent = () => {
+    if (status === 'reviewing_files' && filesForReview) {
+      return (
+        <ErrorBoundary onReset={() => dispatch({ type: 'RESET' })}>
+          <CodeReviewer files={filesForReview} onReset={() => dispatch({ type: 'RESET' })} />
+        </ErrorBoundary>
+      );
+    }
+    if (holisticAnalysisResult) {
+      return (
+        <ErrorBoundary onReset={() => dispatch({ type: 'RESET' })}>
+          <RepoAnalyzer 
+              analysisResult={holisticAnalysisResult}
+              originalFiles={allFilesWithContent}
+              isLoading={status === 'analyzing_repo'}
+              statusText={repoAnalysisStatusText}
+              onReset={() => dispatch({ type: 'RESET' })}
+          />
+        </ErrorBoundary>
+      );
+    }
+     if (status === 'analyzing_repo') {
+        return (
+             <RepoAnalyzer 
+                analysisResult={null}
+                originalFiles={null}
+                isLoading={true}
+                statusText={repoAnalysisStatusText}
+                onReset={() => dispatch({ type: 'RESET' })}
+            />
+        );
+     }
+    // Fix: This comparison appears to be unintentional because the types have no overlap.
+    // The reducer logic ensures that if `error` has a value, `status` cannot be 'loading_repo'.
+    if (error) {
+        return <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg">{error}</div>
+    }
+    return (
+      <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
+        <InfoIcon className="h-12 w-12 mb-4" />
+        <h2 className="text-xl font-semibold">Ready for Analysis</h2>
+        <p className="text-center">
+          Use the "Analyze Entire Repository" button for a high-level architectural review,<br/>
+          or select individual files to start a detailed code review.
+        </p>
+      </div>
+    );
   };
+  
+  const isLoading = status === 'loading_repo' || status === 'fetching_files';
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-200 font-sans flex flex-col">
@@ -185,54 +249,54 @@ export default function App(): React.ReactElement {
         </div>
       </header>
 
-      <main className="flex-grow container mx-auto p-4 md:p-6 lg:p-8 flex flex-col lg:flex-row gap-6">
+      <main className="flex-grow container mx-auto p-4 md:p-6 lg:p-8 flex flex-col lg:flex-row gap-6 min-h-0">
         <div className="lg:w-1/4 flex flex-col gap-6">
           <RepoInput
             repoUrl={repoUrl}
-            setRepoUrl={setRepoUrl}
+            setRepoUrl={(url) => dispatch({ type: 'SET_REPO_URL', payload: url })}
             githubToken={githubToken}
-            setGithubToken={setGithubToken}
-            isLoading={isLoadingRepo}
+            setGithubToken={(token) => dispatch({ type: 'SET_GITHUB_TOKEN', payload: token })}
+            isLoading={status === 'loading_repo'}
           />
           <div className="bg-gray-800/50 rounded-lg border border-gray-700 flex flex-col flex-grow min-h-0">
             <div className="p-4 border-b border-gray-700 text-gray-300 flex-shrink-0">
                 <h2 className="text-lg font-semibold">Repository Explorer</h2>
             </div>
-            {isLoadingRepo ? (
+            {status === 'loading_repo' ? (
               <div className="flex justify-center items-center h-48"><Spinner /></div>
-            ) : files.length > 0 ? (
+            ) : repoTree.length > 0 ? (
                 <>
                     <div className="p-4 border-b border-gray-700">
                         <button
                             onClick={handleStartRepoAnalysis}
-                            disabled={isAnalyzingRepo || isLoadingRepo}
+                            disabled={status === 'analyzing_repo' || status === 'loading_repo'}
                             className="w-full bg-indigo-600 text-white font-semibold rounded-md px-4 py-2 hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors duration-200 flex items-center justify-center"
                         >
-                            {isAnalyzingRepo ? (
-                              <>
-                                <Spinner className="w-5 h-5 mr-2"/> 
-                                <span>{repoAnalysisStatusText || 'Analyzing...'}</span>
-                              </>
-                            ) : 'Analyze Entire Repository'}
+                            {status === 'analyzing_repo' ? <><Spinner className="w-5 h-5 mr-2"/><span>{repoAnalysisStatusText || 'Analyzing...'}</span></> : 'Analyze Entire Repository'}
                         </button>
                     </div>
-                    <FileBrowser nodes={files} selectedFilePaths={selectedFilePaths} onToggleFile={handleToggleFileSelection} />
+                    <FileBrowser 
+                        nodes={repoTree} 
+                        selectedFilePaths={selectedFilePaths} 
+                        onToggleFile={(path) => dispatch({ type: 'TOGGLE_FILE_SELECTION', payload: path })}
+                        onSelectAll={(select) => dispatch({ type: 'SET_ALL_FILES_SELECTED', payload: { nodes: repoTree, select }})}
+                    />
                 </>
             ) : (
                <div className="p-4 text-center text-gray-500 flex-grow flex items-center justify-center">{error || 'Enter a repository URL to begin.'}</div>
             )}
-             {files.length > 0 && (
+             {repoTree.length > 0 && (
                 <div className="p-4 border-t border-gray-700 flex-shrink-0 bg-gray-900/50 rounded-b-lg">
                     <p className="text-sm text-gray-400 mb-3">{selectedFilePaths.size} file(s) selected.</p>
                     <div className="flex gap-2">
                         <button
                             onClick={handleStartReview}
-                            disabled={isFetchingContent || selectedFilePaths.size === 0}
+                            disabled={status === 'fetching_files' || selectedFilePaths.size === 0}
                             className="flex-grow flex items-center justify-center bg-purple-600 text-white font-semibold rounded-md px-4 py-2 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors duration-200"
                         >
-                            {isFetchingContent ? <Spinner className="w-5 h-5"/> : `Review Selected (${selectedFilePaths.size})`}
+                            {status === 'fetching_files' ? <Spinner className="w-5 h-5"/> : `Review Selected (${selectedFilePaths.size})`}
                         </button>
-                        <button onClick={() => setSelectedFilePaths(new Set())} disabled={selectedFilePaths.size === 0} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-md disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed">
+                        <button onClick={() => dispatch({ type: 'CLEAR_SELECTION' })} disabled={selectedFilePaths.size === 0} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-md disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed">
                             Clear
                         </button>
                     </div>
@@ -241,32 +305,8 @@ export default function App(): React.ReactElement {
           </div>
         </div>
 
-        <div className="lg:w-3/4">
-           {error && !reviewMode && <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg mb-4">{error}</div>}
-           {reviewMode === 'file' && filesForReview ? (
-             <ErrorBoundary onReset={handleReset}>
-               <CodeReviewer files={filesForReview} onReset={handleReset} />
-             </ErrorBoundary>
-           ) : reviewMode === 'repo' ? (
-             <ErrorBoundary onReset={handleReset}>
-                <RepoAnalyzer 
-                    analysisResult={holisticAnalysisResult}
-                    originalFiles={allFilesWithContent}
-                    isLoading={isAnalyzingRepo}
-                    statusText={repoAnalysisStatusText}
-                    onReset={handleReset}
-                />
-             </ErrorBoundary>
-           ) : (
-              <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
-                <InfoIcon className="h-12 w-12 mb-4" />
-                <h2 className="text-xl font-semibold">Ready for Analysis</h2>
-                <p className="text-center">
-                  Use the "Analyze Entire Repository" button for a high-level architectural review,<br/>
-                  or select individual files to start a detailed code review.
-                </p>
-              </div>
-           )}
+        <div className="lg:w-3/4 flex flex-col min-h-0">
+           {renderMainContent()}
         </div>
       </main>
     </div>

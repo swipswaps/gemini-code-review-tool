@@ -1,24 +1,38 @@
+
 import React, { useState, useMemo } from 'react';
 import { marked } from 'marked';
-import type { HolisticAnalysisResult } from '../types';
+import type { HolisticAnalysisResult, RepoFileWithContent } from '../types';
 import { DiffViewer } from './DiffViewer';
 import { Spinner } from './Spinner';
 import { PlusCircleIcon } from './icons/PlusCircleIcon';
 import { AlertTriangleIcon } from './icons/AlertTriangleIcon';
+import { ChevronIcon } from './icons/ChevronIcon';
 
 interface RepoAnalyzerProps {
   analysisResult: HolisticAnalysisResult | null;
-  originalFiles: { path: string; content: string }[] | null;
+  originalFiles: RepoFileWithContent[] | null;
   isLoading: boolean;
   statusText: string;
   onReset: () => void;
 }
 
-const ChevronIcon = (props: React.SVGProps<SVGSVGElement>) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-        <path d="m6 9 6 6 6-6"/>
-    </svg>
-);
+const CollapsibleSection: React.FC<{ title: string; children: React.ReactNode; count?: number }> = ({ title, children, count }) => {
+    const [isOpen, setIsOpen] = useState(true);
+    const fullTitle = count !== undefined ? `${title} (${count})` : title;
+
+    return (
+        <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
+            <button
+                onClick={() => setIsOpen(!isOpen)}
+                className="w-full flex justify-between items-center p-4 text-left hover:bg-gray-700/50 text-lg font-semibold bg-gray-800/80 text-gray-300"
+            >
+                <span>{fullTitle}</span>
+                <ChevronIcon className={`w-5 h-5 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {isOpen && <div className="border-t border-gray-700">{children}</div>}
+        </div>
+    );
+};
 
 export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ analysisResult, originalFiles, isLoading, statusText, onReset }) => {
   const [openFixPath, setOpenFixPath] = useState<string | null>(null);
@@ -71,20 +85,12 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ analysisResult, orig
       
       <div className="flex-grow space-y-6 overflow-y-auto pr-2 p-1">
         
-        {/* Overall Analysis */}
-        <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
-            <h3 className="text-lg font-semibold p-4 border-b border-gray-700 bg-gray-800/80 flex items-center gap-2 text-gray-300">
-                Overall Analysis
-            </h3>
+        <CollapsibleSection title="Overall Analysis">
             <div className="p-4 prose prose-invert max-w-none" dangerouslySetInnerHTML={{ __html: marked.parse(overallAnalysis) }} />
-        </div>
+        </CollapsibleSection>
 
-        {/* Dependency Review */}
         {dependencyReview && (dependencyReview.analysis || dependencyReview.suggestions?.length > 0) && (
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
-                <h3 className="text-lg font-semibold p-4 border-b border-gray-700 bg-gray-800/80 flex items-center gap-2 text-gray-300">
-                    Dependency Review
-                </h3>
+            <CollapsibleSection title="Dependency Review">
                 <div className="p-4 prose prose-invert max-w-none">
                     <div dangerouslySetInnerHTML={{ __html: marked.parse(dependencyReview.analysis) }} />
                     {dependencyReview.suggestions?.length > 0 && (
@@ -96,15 +102,11 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ analysisResult, orig
                         </>
                     )}
                 </div>
-            </div>
+            </CollapsibleSection>
         )}
 
-        {/* Error Trends */}
         {errorTrends?.length > 0 && (
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
-                <h3 className="text-lg font-semibold p-4 border-b border-gray-700 bg-gray-800/80 flex items-center gap-2 text-gray-300">
-                   Common Error Trends
-                </h3>
+            <CollapsibleSection title="Common Error Trends">
                 <div className="p-4 space-y-4">
                     {errorTrends.map((trend, i) => (
                         <div key={i} className="p-3 bg-gray-900/50 rounded-md border border-gray-600">
@@ -113,15 +115,11 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ analysisResult, orig
                         </div>
                     ))}
                 </div>
-            </div>
+            </CollapsibleSection>
         )}
 
-        {/* Suggested Fixes */}
         {suggestedFixes?.length > 0 && (
-             <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
-                <h3 className="text-lg font-semibold p-4 border-b border-gray-700 bg-gray-800/80 flex items-center gap-2 text-gray-300">
-                   Suggested Fixes ({suggestedFixes.length})
-                </h3>
+             <CollapsibleSection title="Suggested Fixes" count={suggestedFixes.length}>
                 <div className="p-2 space-y-2">
                    {suggestedFixes.map(fix => {
                        const originalCode = originalFilesMap.get(fix.filePath);
@@ -146,7 +144,7 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ analysisResult, orig
                        )
                    })}
                 </div>
-            </div>
+            </CollapsibleSection>
         )}
       </div>
     </div>

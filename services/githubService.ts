@@ -3,7 +3,7 @@ import type { RepoTreeNode, RepoTreeFolder, RepoTreeFile } from '../types';
 const API_BASE = 'https://api.github.com';
 
 // Helper to parse "owner/repo" from a GitHub URL
-const parseGitHubUrl = (url: string): { owner: string; repo: string } | null => {
+export const parseGitHubUrl = (url: string): { owner: string; repo: string } | null => {
   try {
     const urlObj = new URL(url);
     if (urlObj.hostname !== 'github.com') {

@@ -14,6 +14,12 @@ export interface RepoTreeFolder {
 
 export type RepoTreeNode = RepoTreeFile | RepoTreeFolder;
 
+export interface RepoFileWithContent {
+    path: string;
+    content: string;
+    error?: string;
+}
+
 export interface ReviewResult {
   reviewComments: string;
   correctedCode: string;
@@ -40,4 +46,15 @@ export interface HolisticAnalysisResult {
   dependencyReview: DependencyReview;
   errorTrends: ErrorTrend[];
   suggestedFixes: SuggestedFix[];
+}
+
+export type ReviewStatus = 'idle' | 'streaming' | 'complete' | 'error';
+export type LintingStatus = 'idle' | 'linting' | 'complete' | 'error';
+
+export interface ReviewState {
+  status: ReviewStatus;
+  lintingStatus: LintingStatus;
+  streamedComments: string;
+  result: ReviewResult | null;
+  error: string | null;
 }

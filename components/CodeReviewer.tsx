@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import type { ReviewResult } from '../types';
+import type { ReviewState, RepoFileWithContent } from '../types';
 import { reviewCodeStream, lintCode } from '../services/geminiService';
 import { DiffViewer } from './DiffViewer';
 import { Spinner } from './Spinner';
@@ -7,29 +7,12 @@ import { PlusCircleIcon } from './icons/PlusCircleIcon';
 import { WandIcon } from './icons/WandIcon';
 import { ReviewComments } from './ReviewComments';
 import { CODE_SEPARATOR } from '../utils/constants';
+import { ChevronIcon } from './icons/ChevronIcon';
 
 interface CodeReviewerProps {
-  files: { path: string; content: string; error?: string }[];
+  files: RepoFileWithContent[];
   onReset: () => void;
 }
-
-type ReviewStatus = 'idle' | 'streaming' | 'complete' | 'error';
-type LintingStatus = 'idle' | 'linting' | 'complete' | 'error';
-
-export interface ReviewState {
-  status: ReviewStatus;
-  lintingStatus: LintingStatus;
-  streamedComments: string;
-  result: ReviewResult | null;
-  error: string | null;
-}
-
-const ChevronIcon = (props: React.SVGProps<SVGSVGElement>) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-        <path d="m6 9 6 6 6-6"/>
-    </svg>
-);
-
 
 export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) => {
   const [reviewStates, setReviewStates] = useState<Map<string, ReviewState>>(new Map());
@@ -37,7 +20,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
   const [highlightedLines, setHighlightedLines] = useState<Set<number> | null>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
 
-  const runReview = useCallback(async (file: { path: string; content: string; error?: string }) => {
+  const runReview = useCallback(async (file: RepoFileWithContent) => {
     setReviewStates(prev => new Map(prev).set(file.path, {
         status: 'streaming',
         lintingStatus: 'idle',
@@ -90,7 +73,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
     }
   }, []);
   
-    const handleLintFile = useCallback(async (file: { path: string; content: string; error?: string }) => {
+    const handleLintFile = useCallback(async (file: RepoFileWithContent) => {
         setReviewStates(prev => {
             const newStates = new Map(prev);
             const currentState = newStates.get(file.path);
@@ -206,7 +189,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
     setHighlightedLines(null);
   };
   
-  const getStatusIndicator = (status: ReviewStatus) => {
+  const getStatusIndicator = (status: ReviewState['status']) => {
     switch(status) {
         case 'streaming': return <Spinner className="w-4 h-4 text-purple-400" />;
         case 'complete': return <span className="text-green-400 text-lg font-bold">✓</span>;

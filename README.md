@@ -69,7 +69,7 @@ The project is organized into a logical structure to separate concerns.
 
 ## Installation and Setup Guide
 
-This project is a static web application and can be run with any simple HTTP server. However, it relies on a `process.env.API_KEY` environment variable being available in the browser context, which standard static servers do not provide. The setup below includes using `Vite` as a development server because it can easily handle this requirement without modifying the application's source code.
+This project is a static web application and can be run with any simple HTTP server. However, it relies on a `process.env.GEMINI_API_KEY` environment variable being available in the browser context, which standard static servers do not provide. The setup below includes using `Vite` as a development server because it can easily handle this requirement without modifying the application's source code.
 
 ### Prerequisites
 
@@ -96,11 +96,18 @@ npm install vite
 ### 3. Set Up Your API Keys
 
 #### a) Gemini API Key
+
+<div style="background-color: #4B0000; border: 1px solid #FF5555; border-radius: 8px; padding: 16px; color: #FFDDDD;">
+  <h3 style="color: #FF8888; margin-top: 0;">⚠️ Security Warning</h3>
+  <p>This project is designed as a proof-of-concept and uses a client-side implementation where the <strong>Gemini API key is exposed in the browser</strong>. This is a significant security risk.</p>
+  <p><strong>Do not use this application in a production environment or with an unrestricted API key.</strong> Anyone with access to the web page can view your API key and use it, which could lead to unexpected charges on your Google Cloud bill. For a production-ready application, you must implement a backend proxy that securely stores the API key and forwards requests to the Gemini API.</p>
+</div>
+
 1.  Go to [Google AI Studio](https://aistudio.google.com/app/apikey) and create an API key.
 2.  Create a file named `.env` in the root of the project and add your key:
     ```
     # .env
-    API_KEY=YOUR_GEMINI_API_KEY_HERE
+    GEMINI_API_KEY=YOUR_GEMINI_API_KEY_HERE
     ```
 
 #### b) GitHub Personal Access Token (Recommended)
@@ -113,7 +120,7 @@ The GitHub API has strict rate limits for unauthenticated requests. To avoid the
 
 ### 4. Configure Vite
 
-Create a `vite.config.js` file in the project root. This configuration will make the environment variable from your `.env` file available as `process.env.API_KEY` in the browser.
+Create a `vite.config.js` file in the project root. This configuration will make the environment variable from your `.env` file available as `process.env.GEMINI_API_KEY` in the browser.
 
 ```javascript
 // vite.config.js
@@ -123,12 +130,12 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   return {
     define: {
-      'process.env.API_KEY': JSON.stringify(env.API_KEY)
+      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
     }
   }
 });
 ```
-*This configuration tells Vite to find `API_KEY` in your `.env` file and replace any occurrence of `process.env.API_KEY` in the code with the actual key string during development.*
+*This configuration tells Vite to find `GEMINI_API_KEY` in your `.env` file and replace any occurrence of `process.env.GEMINI_API_KEY` in the code with the actual key string during development.*
 
 ### 5. Run the Development Server
 

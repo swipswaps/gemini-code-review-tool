@@ -9,6 +9,7 @@ interface FileBrowserProps {
   nodes: RepoTreeNode[];
   selectedFilePaths: Set<string>;
   onToggleFile: (path: string) => void;
+  onSelectAll: (select: boolean) => void;
 }
 
 const TreeNode: React.FC<{
@@ -77,24 +78,44 @@ const TreeNode: React.FC<{
 };
 
 
-export const FileBrowser: React.FC<FileBrowserProps> = ({ nodes, selectedFilePaths, onToggleFile }) => {
+export const FileBrowser: React.FC<FileBrowserProps> = ({ nodes, selectedFilePaths, onToggleFile, onSelectAll }) => {
   if (nodes.length === 0) {
     return <div className="p-4 text-gray-500 text-center">No files to display.</div>;
   }
+  
+  const allFilePaths = React.useMemo(() => {
+    const paths: string[] = [];
+    const traverse = (node: RepoTreeNode) => {
+        if (node.type === 'file') paths.push(node.path);
+        else node.children.forEach(traverse);
+    };
+    nodes.forEach(traverse);
+    return paths;
+  }, [nodes]);
+
+  const allSelected = allFilePaths.length > 0 && selectedFilePaths.size === allFilePaths.length;
 
   return (
-    <nav className="p-2 flex-grow overflow-y-auto">
-      <ul>
-        {nodes.map((node) => (
-          <TreeNode
-            key={node.path}
-            node={node}
-            selectedFilePaths={selectedFilePaths}
-            onToggleFile={onToggleFile}
-            level={0}
-           />
-        ))}
-      </ul>
-    </nav>
+    <>
+      <div className="p-2 flex-shrink-0 border-b border-gray-700">
+          <div className="flex justify-end gap-2 px-1">
+              <button onClick={() => onSelectAll(true)} className="text-xs text-purple-400 hover:underline disabled:text-gray-600" disabled={allSelected}>Select All</button>
+              <button onClick={() => onSelectAll(false)} className="text-xs text-purple-400 hover:underline disabled:text-gray-600" disabled={selectedFilePaths.size === 0}>Deselect All</button>
+          </div>
+      </div>
+      <nav className="p-2 flex-grow overflow-y-auto">
+        <ul>
+          {nodes.map((node) => (
+            <TreeNode
+              key={node.path}
+              node={node}
+              selectedFilePaths={selectedFilePaths}
+              onToggleFile={onToggleFile}
+              level={0}
+             />
+          ))}
+        </ul>
+      </nav>
+    </>
   );
 };
