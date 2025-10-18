@@ -6,6 +6,7 @@ import { Spinner } from './Spinner';
 import { PlusCircleIcon } from './icons/PlusCircleIcon';
 import { WandIcon } from './icons/WandIcon';
 import { ReviewComments } from './ReviewComments';
+import { CODE_SEPARATOR } from '../utils/constants';
 
 interface CodeReviewerProps {
   files: { path: string; content: string; error?: string }[];
@@ -60,11 +61,11 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
         });
       }
 
-      const parts = fullResponse.split('<<CODE_SEPARATOR>>');
+      const parts = fullResponse.split(CODE_SEPARATOR);
       if (parts.length < 2) throw new Error("Review response format is invalid. The model did not provide a code separator.");
       
       const comments = parts[0].trim();
-      const correctedCodeRaw = parts.slice(1).join('<<CODE_SEPARATOR>>').trim();
+      const correctedCodeRaw = parts.slice(1).join(CODE_SEPARATOR).trim();
       const codeMatch = correctedCodeRaw.match(/```(?:\w+)?\n([\s\S]*?)\n```/);
       const correctedCode = codeMatch ? codeMatch[1] : correctedCodeRaw;
 
@@ -159,7 +160,6 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
     });
   }, [files, runReview]);
   
-  // Effect for handling clicks on line number references in comments
   useEffect(() => {
     const currentRef = commentsRef.current;
     if (!currentRef) return;
@@ -183,10 +183,9 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
                     setHighlightedLines(lines);
                     
                     const diffViewer = currentRef.closest('.review-panel-content')?.querySelector('.diff-viewer-container');
-                    // FIX: Check if diffViewer is an HTMLElement to access offsetWidth for triggering a reflow.
                     if (diffViewer instanceof HTMLElement) {
                         diffViewer.classList.remove('animate-pulse-once');
-                        void diffViewer.offsetWidth; // Trigger reflow
+                        void diffViewer.offsetWidth; 
                         setTimeout(() => diffViewer.classList.add('animate-pulse-once'), 10);
                     }
                 }
@@ -204,7 +203,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
 
   const toggleAccordion = (path: string) => {
     setOpenFilePath(prev => (prev === path ? null : path));
-    setHighlightedLines(null); // Clear highlights when toggling accordion
+    setHighlightedLines(null);
   };
   
   const getStatusIndicator = (status: ReviewStatus) => {

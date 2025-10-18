@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { CODE_SEPARATOR } from '../utils/constants';
 
 const API_KEY = process.env.API_KEY;
 
@@ -26,7 +27,7 @@ export async function* reviewCodeStream(code: string, fileName: string): AsyncGe
       First, stream a detailed, markdown-formatted review of the code. Explain the issues you find and the reasoning behind your proposed corrections.
       For each distinct issue, reference the relevant line number(s) from the original code by wrapping them in a special HTML tag, for example: <span data-lines="15-18">L15-18</span>. This is critical for the UI to highlight the code.
       
-      After you have finished writing all the review comments, add a separator token "<<CODE_SEPARATOR>>" on a new line by itself.
+      After you have finished writing all the review comments, add a separator token "${CODE_SEPARATOR}" on a new line by itself.
 
       Finally, after the separator, provide the full, corrected version of the code snippet in a markdown code block. This corrected code should be a drop-in replacement for the original file content.
       
@@ -95,5 +96,43 @@ export async function lintCode(code: string, fileName: string): Promise<string> 
   } catch (error) {
     console.error("Error linting code:", error);
     throw new Error("Failed to get linted code from Gemini API.");
+  }
+}
+
+export async function* analyzeRepoStructureStream(fileTree: string): AsyncGenerator<string> {
+  try {
+    const prompt = `
+      You are an expert solution architect and senior software engineer.
+      Your task is to perform a high-level architectural review of a project based on its file and directory structure.
+
+      Analyze the following file tree and provide a detailed, markdown-formatted report covering:
+      - **Overall Architecture:** What is the likely architecture (e.g., component-based, MVC)? Is it appropriate for a modern web application?
+      - **Code Organization:** Is the code well-organized? Is there a clear separation of concerns (e.g., components, services, types, utils)?
+      - **Naming Conventions:** Are the file and folder names clear, consistent, and descriptive?
+      - **Potential Issues & "Code Smells":** Based on the structure, identify any potential red flags. For example, are there overly large components, a messy root directory, or a lack of modularity?
+      - **Suggestions for Improvement:** Provide actionable recommendations for refactoring, reorganization, or further investigation.
+
+      Do not review the content of the files, only the structure. Provide your analysis as a comprehensive report.
+
+      Here is the file tree to analyze:
+      \`\`\`
+      ${fileTree}
+      \`\`\`
+    `;
+
+    const responseStream = await ai.models.generateContentStream({
+      model: "gemini-2.5-pro",
+      contents: prompt,
+    });
+    
+    for await (const chunk of responseStream) {
+        if (chunk.text) {
+            yield chunk.text;
+        }
+    }
+
+  } catch (error) {
+    console.error("Error analyzing repo structure:", error);
+    throw new Error("Failed to get repository analysis from Gemini API.");
   }
 }

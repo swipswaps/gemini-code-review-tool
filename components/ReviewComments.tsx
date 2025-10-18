@@ -2,6 +2,7 @@ import React from 'react';
 import { marked } from 'marked';
 import type { ReviewState } from './CodeReviewer';
 import { WandIcon } from './icons/WandIcon';
+import { CODE_SEPARATOR } from '../utils/constants';
 
 interface ReviewCommentsProps {
   state: ReviewState;
@@ -17,11 +18,9 @@ export const ReviewComments: React.FC<ReviewCommentsProps> = ({ state, container
   };
   
   const getCommentsToParse = () => {
-    // When complete, use the definitive result. Otherwise, use the in-progress stream.
-    // This ensures that as markdown is streamed, it gets formatted immediately.
     const rawText = (state.status === 'complete' && state.result)
       ? state.result.reviewComments
-      : state.streamedComments.split('<<CODE_SEPARATOR>>')[0];
+      : state.streamedComments.split(CODE_SEPARATOR)[0];
 
     return marked.parse(rawText);
   };

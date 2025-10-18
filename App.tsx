@@ -1,9 +1,12 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import type { RepoTreeNode } from './types';
 import { fetchRepoTree, fetchFileContent } from './services/githubService';
+import { analyzeRepoStructureStream } from './services/geminiService';
+import { serializeTree } from './utils/treeSerializer';
 import { RepoInput } from './components/RepoInput';
 import { FileBrowser } from './components/FileBrowser';
 import { CodeReviewer } from './components/CodeReviewer';
+import { RepoAnalyzer } from './components/RepoAnalyzer';
 import { Spinner } from './components/Spinner';
 import { GithubIcon } from './components/icons/GithubIcon';
 import { InfoIcon } from './components/icons/InfoIcon';
@@ -31,6 +34,10 @@ export default function App(): React.ReactElement {
   const [isFetchingContent, setIsFetchingContent] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [reviewMode, setReviewMode] = useState<'file' | 'repo' | null>(null);
+  const [repoAnalysisStream, setRepoAnalysisStream] = useState<string>('');
+  const [isAnalyzingRepo, setIsAnalyzingRepo] = useState<boolean>(false);
+
   const handleFetchFiles = useCallback(async (urlToFetch: string) => {
     const parsed = parseGitHubUrl(urlToFetch);
     if (!parsed) {
@@ -43,6 +50,8 @@ export default function App(): React.ReactElement {
     setFilesForReview(null);
     setSelectedFilePaths(new Set());
     setFiles([]);
+    setReviewMode(null);
+    setRepoAnalysisStream('');
 
     try {
       const fetchedTree = await fetchRepoTree(urlToFetch);
@@ -58,13 +67,12 @@ export default function App(): React.ReactElement {
     }
   }, []);
 
-  // Effect to automatically fetch files when repoUrl changes (with debounce)
   useEffect(() => {
     const handler = setTimeout(() => {
       if (repoUrl && parseGitHubUrl(repoUrl)) {
         handleFetchFiles(repoUrl);
       }
-    }, 500); // 500ms debounce delay
+    }, 500);
 
     return () => {
       clearTimeout(handler);
@@ -115,14 +123,40 @@ export default function App(): React.ReactElement {
 
         setFilesForReview(filesToReview);
         setSelectedFilePaths(new Set());
+        setReviewMode('file');
     } finally {
         setIsFetchingContent(false);
     }
   }, [repoUrl, selectedFilePaths]);
 
+  const handleStartRepoAnalysis = useCallback(async () => {
+    if (files.length === 0) return;
+    
+    setReviewMode('repo');
+    setIsAnalyzingRepo(true);
+    setRepoAnalysisStream('');
+    setError(null);
 
-  const handleResetReview = () => {
+    try {
+      const treeString = serializeTree(files);
+      const stream = analyzeRepoStructureStream(treeString);
+      for await (const chunk of stream) {
+        setRepoAnalysisStream(prev => prev + chunk);
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
+      setError(errorMessage);
+    } finally {
+      setIsAnalyzingRepo(false);
+    }
+  }, [files]);
+
+  const handleReset = () => {
     setFilesForReview(null);
+    setReviewMode(null);
+    setRepoAnalysisStream('');
+    setIsAnalyzingRepo(false);
+    setError(null);
   };
 
   return (
@@ -144,13 +178,24 @@ export default function App(): React.ReactElement {
             isLoading={isLoadingRepo}
           />
           <div className="bg-gray-800/50 rounded-lg border border-gray-700 flex flex-col flex-grow min-h-0">
-            <h2 className="text-lg font-semibold p-4 border-b border-gray-700 text-gray-300 flex-shrink-0">Files</h2>
+            <div className="p-4 border-b border-gray-700 text-gray-300 flex-shrink-0">
+                <h2 className="text-lg font-semibold">Repository Explorer</h2>
+            </div>
             {isLoadingRepo ? (
-              <div className="flex justify-center items-center h-48">
-                <Spinner />
-              </div>
+              <div className="flex justify-center items-center h-48"><Spinner /></div>
             ) : files.length > 0 ? (
-              <FileBrowser nodes={files} selectedFilePaths={selectedFilePaths} onToggleFile={handleToggleFileSelection} />
+                <>
+                    <div className="p-4 border-b border-gray-700">
+                        <button
+                            onClick={handleStartRepoAnalysis}
+                            disabled={isAnalyzingRepo || isLoadingRepo}
+                            className="w-full bg-indigo-600 text-white font-semibold rounded-md px-4 py-2 hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors duration-200 flex items-center justify-center"
+                        >
+                            {isAnalyzingRepo ? <Spinner className="w-5 h-5"/> : 'Analyze Entire Repository'}
+                        </button>
+                    </div>
+                    <FileBrowser nodes={files} selectedFilePaths={selectedFilePaths} onToggleFile={handleToggleFileSelection} />
+                </>
             ) : (
                <div className="p-4 text-center text-gray-500 flex-grow flex items-center justify-center">{error || 'Enter a repository URL to begin.'}</div>
             )}
@@ -175,16 +220,27 @@ export default function App(): React.ReactElement {
         </div>
 
         <div className="lg:w-3/4">
-           {error && !filesForReview && <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg mb-4">{error}</div>}
-           {filesForReview ? (
-             <ErrorBoundary onReset={handleResetReview}>
-               <CodeReviewer files={filesForReview} onReset={handleResetReview} />
+           {error && !reviewMode && <div className="bg-red-900/50 border border-red-700 text-red-300 p-4 rounded-lg mb-4">{error}</div>}
+           {reviewMode === 'file' && filesForReview ? (
+             <ErrorBoundary onReset={handleReset}>
+               <CodeReviewer files={filesForReview} onReset={handleReset} />
+             </ErrorBoundary>
+           ) : reviewMode === 'repo' ? (
+             <ErrorBoundary onReset={handleReset}>
+                <RepoAnalyzer 
+                    analysisStream={repoAnalysisStream}
+                    isStreaming={isAnalyzingRepo}
+                    onReset={handleReset}
+                />
              </ErrorBoundary>
            ) : (
               <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
                 <InfoIcon className="h-12 w-12 mb-4" />
-                <h2 className="text-xl font-semibold">Select files to begin</h2>
-                <p>Check one or more files from the list on the left to start a review.</p>
+                <h2 className="text-xl font-semibold">Ready for Analysis</h2>
+                <p className="text-center">
+                  Use the "Analyze Entire Repository" button for a high-level architectural review,<br/>
+                  or select individual files to start a detailed code review.
+                </p>
               </div>
            )}
         </div>
