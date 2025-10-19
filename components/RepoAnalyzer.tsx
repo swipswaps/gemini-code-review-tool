@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { marked } from 'marked';
 import type { HolisticAnalysisResult, RepoFileWithContent } from '../types';
 import { DiffViewer } from './DiffViewer';
@@ -6,8 +6,11 @@ import { Spinner } from './Spinner';
 import { PlusCircleIcon } from './icons/PlusCircleIcon';
 import { AlertTriangleIcon } from './icons/AlertTriangleIcon';
 import { ChevronIcon } from './icons/ChevronIcon';
+import { DownloadIcon } from './icons/DownloadIcon';
+import { parseGitHubUrl } from '../services/githubService';
 
 interface RepoAnalyzerProps {
+  repoUrl: string;
   analysisResult: HolisticAnalysisResult | null;
   originalFiles: RepoFileWithContent[] | null;
   isLoading: boolean;
@@ -33,7 +36,7 @@ const CollapsibleSection: React.FC<{ title: string; children: React.ReactNode; c
     );
 };
 
-export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ analysisResult, originalFiles, isLoading, statusText, onReset }) => {
+export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisResult, originalFiles, isLoading, statusText, onReset }) => {
   const [openFixPath, setOpenFixPath] = useState<string | null>(null);
 
   const originalFilesMap = useMemo(() => {
@@ -41,6 +44,64 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ analysisResult, orig
     return new Map(originalFiles.map(f => [f.path, f.content]));
   }, [originalFiles]);
   
+  const handleExport = useCallback(() => {
+    if (!analysisResult || !repoUrl) return;
+
+    const { overallAnalysis, dependencyReview, errorTrends, suggestedFixes } = analysisResult;
+
+    const parsedUrl = parseGitHubUrl(repoUrl);
+    const repoName = parsedUrl ? parsedUrl.repo : 'repository';
+    const date = new Date().toISOString().split('T')[0];
+    const filename = `${repoName}-analysis-${date}.md`;
+
+    let markdownContent = `# Code Review Analysis for ${repoName}\n\n**Date:** ${date}\n\n---\n\n`;
+
+    if (overallAnalysis) {
+        markdownContent += `## Overall Analysis\n\n${overallAnalysis}\n\n---\n\n`;
+    }
+
+    if (dependencyReview) {
+        markdownContent += `## Dependency Review\n\n`;
+        markdownContent += `### Analysis\n${dependencyReview.analysis}\n\n`;
+        if (dependencyReview.suggestions?.length > 0) {
+            markdownContent += `### Suggestions\n\n`;
+            markdownContent += dependencyReview.suggestions.map(s => `- ${s}`).join('\n');
+            markdownContent += `\n\n`;
+        }
+        markdownContent += `---\n\n`;
+    }
+
+    if (errorTrends && errorTrends.length > 0) {
+        markdownContent += `## Common Error Trends\n\n`;
+        errorTrends.forEach(trend => {
+            markdownContent += `### ${trend.trendDescription}\n\n`;
+            markdownContent += `- **Files Affected:** ${trend.filesAffected.join(', ')}\n\n`;
+        });
+        markdownContent += `---\n\n`;
+    }
+
+    if (suggestedFixes && suggestedFixes.length > 0) {
+        markdownContent += `## Suggested Fixes\n\n`;
+        suggestedFixes.forEach((fix, index) => {
+            const lang = fix.filePath.split('.').pop() || '';
+            markdownContent += `### ${index + 1}. \`${fix.filePath}\`\n\n`;
+            markdownContent += `${fix.description}\n\n`;
+            markdownContent += `**Corrected Code:**\n`;
+            markdownContent += `\`\`\`${lang}\n${fix.correctedCode}\n\`\`\`\n\n`;
+        });
+    }
+
+    const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+  }, [analysisResult, repoUrl]);
+
+
   const renderLoading = () => (
       <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
         <Spinner className="h-12 w-12 mb-4" />
@@ -79,13 +140,24 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ analysisResult, orig
                      </div>
                  )}
             </div>
-            <button
-            onClick={onReset}
-            className="flex items-center space-x-2 border border-purple-600 text-purple-300 font-semibold rounded-md px-4 py-2 hover:bg-purple-600/20 transition-colors duration-200"
-            >
-            <PlusCircleIcon className="w-5 h-5" />
-            <span>New Review</span>
-            </button>
+            <div className="flex items-center space-x-2">
+                <button
+                    onClick={handleExport}
+                    disabled={!analysisResult?.overallAnalysis}
+                    className="flex items-center space-x-2 border border-gray-600 text-gray-300 font-semibold rounded-md px-4 py-2 hover:bg-gray-700/50 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Export analysis to Markdown"
+                >
+                    <DownloadIcon className="w-5 h-5" />
+                    <span>Export</span>
+                </button>
+                <button
+                onClick={onReset}
+                className="flex items-center space-x-2 border border-purple-600 text-purple-300 font-semibold rounded-md px-4 py-2 hover:bg-purple-600/20 transition-colors duration-200"
+                >
+                <PlusCircleIcon className="w-5 h-5" />
+                <span>New Review</span>
+                </button>
+            </div>
         </div>
         
         <div className="flex-grow space-y-6 overflow-y-auto pr-2 p-1">

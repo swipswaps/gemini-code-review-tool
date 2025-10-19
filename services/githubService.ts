@@ -2,6 +2,21 @@ import type { RepoTreeNode, RepoTreeFolder, RepoTreeFile } from '../types';
 
 const API_BASE = 'https://api.github.com';
 
+// Helper to add a timeout to fetch requests
+const fetchWithTimeout = async (resource: RequestInfo, options: RequestInit = {}, timeout = 15000) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    
+    const response = await fetch(resource, {
+        ...options,
+        signal: controller.signal  
+    });
+    
+    clearTimeout(id);
+    return response;
+};
+
+
 // Helper to parse "owner/repo" from a GitHub URL
 export const parseGitHubUrl = (url: string): { owner: string; repo: string } | null => {
   try {
@@ -44,7 +59,7 @@ export const fetchFolderContents = async (owner: string, repo: string, path: str
         headers['Authorization'] = `Bearer ${token}`;
     }
 
-    const contentsResponse = await fetch(`${API_BASE}/repos/${owner}/${repo}/contents/${path}`, { headers });
+    const contentsResponse = await fetchWithTimeout(`${API_BASE}/repos/${owner}/${repo}/contents/${path}`, { headers });
     if (!contentsResponse.ok) {
         if (contentsResponse.status === 404) throw new Error(`Folder not found: ${path}`);
         if (contentsResponse.status === 403) throw new Error('GitHub API rate limit exceeded. Please provide a Personal Access Token.');
@@ -84,7 +99,7 @@ export const fetchFileContent = async (owner: string, repo: string, path: string
         headers['Authorization'] = `Bearer ${token}`;
     }
     
-    const contentResponse = await fetch(`${API_BASE}/repos/${owner}/${repo}/contents/${path}`, { headers });
+    const contentResponse = await fetchWithTimeout(`${API_BASE}/repos/${owner}/${repo}/contents/${path}`, { headers });
     
     if (!contentResponse.ok) {
         if (contentResponse.status === 403) throw new Error('GitHub API rate limit exceeded. Please provide a Personal Access Token.');
@@ -97,10 +112,17 @@ export const fetchFileContent = async (owner: string, repo: string, path: string
       throw new Error(`The path "${path}" is a directory, not a file.`);
     }
 
-    if (contentData.encoding !== 'base64' || contentData.content == null) {
-      // Handle empty files gracefully
-      if (contentData.content === '') return '';
-      throw new Error(`Unsupported file encoding or missing content for file: ${path}`);
+    // Reliably handle empty files by checking the size property.
+    if (contentData.size === 0) {
+        return '';
+    }
+
+    if (contentData.encoding !== 'base64' || typeof contentData.content !== 'string') {
+        if (contentData.download_url) {
+            // This indicates a file too large for the contents API. Treat as an error for this app.
+            throw new Error(`File is too large to fetch via this method: ${path}`);
+        }
+        throw new Error(`Unsupported file encoding or missing content for file: ${path}`);
     }
 
     try {
@@ -116,7 +138,8 @@ export const fetchAllFileContents = async (
   owner: string,
   repo: string,
   initialTree: RepoTreeNode[],
-  token?: string
+  token?: string,
+  onProgress?: (message: string) => void
 ): Promise<{ path: string; content: string }[]> => {
   
   const allFiles: { path: string, content: string }[] = [];
@@ -129,23 +152,31 @@ export const fetchAllFileContents = async (
       fetchedPaths.add(node.path);
 
       if (node.type === 'file') {
+          onProgress?.(`Fetching file ${allFiles.length + 1}/100: ${node.path}`);
           try {
               const content = await fetchFileContent(owner, repo, node.path, token);
               allFiles.push({ path: node.path, content });
           } catch(e) {
+              const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+              onProgress?.(`ERROR fetching ${node.path}: ${errorMessage}`);
               console.error(`Skipping file ${node.path} due to fetch error:`, e);
-              allFiles.push({ path: node.path, content: `// Error fetching content: ${(e as Error).message}` });
+              allFiles.push({ path: node.path, content: `// Error fetching content: ${errorMessage}` });
           }
       } else if (node.type === 'folder') {
+          onProgress?.(`Scanning directory: ${node.path || '/'}`);
           try {
             const children = await fetchFolderContents(owner, repo, node.path, token);
-            foldersToFetch.push(...children);
+            // Push children in reverse order to process them in a more natural (e.g., alphabetical) order
+            foldersToFetch.push(...[...children].reverse());
           } catch(e) {
+             const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+             onProgress?.(`ERROR scanning directory ${node.path || '/'}: ${errorMessage}`);
              console.error(`Skipping folder ${node.path} due to fetch error:`, e);
           }
       }
 
       if (allFiles.length >= 100) {
+          onProgress?.(`Reached 100 files. Starting analysis...`);
           console.warn(`Reached 100 files. Limiting analysis to the first 100 files fetched to avoid performance issues.`);
           break;
       }

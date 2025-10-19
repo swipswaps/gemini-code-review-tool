@@ -25,7 +25,8 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error("Uncaught error:", error, errorInfo);
   }
   
-  private handleReset = () => {
+  // FIX: Changed from private to public to ensure accessibility from JSX.
+  public handleReset = () => {
     if (this.props.onReset) {
       this.props.onReset();
       this.setState({ hasError: false, error: null });

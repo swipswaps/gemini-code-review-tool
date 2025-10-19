@@ -217,8 +217,11 @@ export default function App(): React.ReactElement {
     const { owner, repo } = parsed;
     let fetchedContents: RepoFileWithContent[] = [];
     try {
-      dispatch({ type: 'REPO_ANALYSIS_STATUS_UPDATE', payload: 'Fetching all file contents (up to 100)...' });
-      fetchedContents = await fetchAllFileContents(owner, repo, repoTree, githubToken);
+      const onFetchProgress = (message: string) => {
+        dispatch({ type: 'REPO_ANALYSIS_STATUS_UPDATE', payload: message });
+      };
+      
+      fetchedContents = await fetchAllFileContents(owner, repo, repoTree, githubToken, onFetchProgress);
       
       const stream = analyzeRepositoryStream(fetchedContents);
       for await (const event of stream) {
@@ -250,6 +253,7 @@ export default function App(): React.ReactElement {
       return (
         <ErrorBoundary onReset={() => dispatch({ type: 'RESET' })}>
           <RepoAnalyzer 
+              repoUrl={repoUrl}
               analysisResult={holisticAnalysisResult}
               originalFiles={allFilesWithContent}
               isLoading={status === 'analyzing_repo'}

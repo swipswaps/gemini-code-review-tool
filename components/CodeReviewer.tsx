@@ -37,6 +37,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
         setReviewStates(prev => {
             const newStates = new Map(prev);
             const currentState = newStates.get(file.path);
+            // FIX: Explicitly check for currentState before spreading to prevent type errors.
             if (currentState) {
                 newStates.set(file.path, { ...currentState, status: 'streaming', streamedComments: fullResponse });
             }
@@ -65,6 +66,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
       setReviewStates(prev => {
           const newStates = new Map(prev);
           const currentState = newStates.get(file.path);
+          // FIX: Explicitly check for currentState before spreading to prevent type errors.
           if (currentState) {
               newStates.set(file.path, { ...currentState, status: 'error', error: errorMessage });
           }
@@ -77,6 +79,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
         setReviewStates(prev => {
             const newStates = new Map(prev);
             const currentState = newStates.get(file.path);
+            // FIX: Explicitly check for currentState before spreading to prevent type errors.
             if (currentState) {
                 newStates.set(file.path, { ...currentState, lintingStatus: 'linting' });
             }
@@ -89,6 +92,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
             setReviewStates(prev => {
                 const newStates = new Map(prev);
                 const currentState = newStates.get(file.path);
+                // FIX: Explicitly check for currentState and currentState.result before spreading to prevent type errors.
                 if (currentState && currentState.result) {
                     const newResult = { ...currentState.result, correctedCode: lintedCode };
                     newStates.set(file.path, {
@@ -105,6 +109,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
             setReviewStates(prev => {
                 const newStates = new Map(prev);
                 const currentState = newStates.get(file.path);
+                // FIX: Explicitly check for currentState before spreading to prevent type errors.
                 if (currentState) {
                     newStates.set(file.path, { ...currentState, lintingStatus: 'error' });
                 }
