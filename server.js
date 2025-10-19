@@ -182,6 +182,12 @@ const analyzeRepoRequestHandler = (req, res) => {
     
     sendEvent(res, { type: 'system', message: 'Backend connection established. Receiving file list...' });
 
+    // CRITICAL FIX: Explicitly flush the headers and the first event to the client.
+    // This forces Node.js to send the initial message immediately, bypassing any network buffering.
+    if (res.flushHeaders) {
+        res.flushHeaders();
+    }
+
     let body = '';
     req.on('data', chunk => {
         body += chunk.toString();
