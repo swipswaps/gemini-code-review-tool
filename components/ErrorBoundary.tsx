@@ -1,5 +1,3 @@
-
-
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangleIcon } from './icons/AlertTriangleIcon';
 
@@ -27,10 +25,10 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error("Uncaught error:", error, errorInfo);
   }
   
-  // FIX: Standard class methods in JavaScript do not automatically bind `this`.
-  // When `handleReset` is passed as a callback to `onClick`, its `this` context is lost.
-  // By defining `handleReset` as an arrow function, `this` is lexically bound to the component instance,
-  // ensuring `this.props` and `this.setState` are available.
+  // FIX: The original handleReset method was a regular function, which did not correctly
+  // bind the `this` context when used as an event handler. This caused errors when trying
+  // to access `this.props` or `this.setState`. It has been converted to an arrow function
+  // to ensure `this` is always correctly bound to the component instance.
   handleReset = () => {
     if (this.props.onReset) {
       this.props.onReset();

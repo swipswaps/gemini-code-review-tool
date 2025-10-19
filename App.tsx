@@ -1,5 +1,3 @@
-
-
 import React, { useReducer, useCallback, useEffect } from 'react';
 // FIX: Removed unused HolisticAnalysisResult type
 import type { RepoTreeNode, RepoFileWithContent, RepoTreeFolder, RepoAnalysisStreamEvent, AnalysisTask } from './types';
@@ -44,6 +42,7 @@ type AppAction =
   | { type: 'START_REPO_ANALYSIS' }
   | { type: 'FETCH_ANALYSIS_FILES_SUCCESS'; payload: RepoFileWithContent[] }
   | { type: 'REPO_ANALYSIS_PROCESSING_FILE'; payload: string }
+  | { type: 'REPO_ANALYSIS_SYSTEM_EVENT', payload: string }
   | { type: 'REPO_ANALYSIS_TASK_START', payload: { id: string, title: string } }
   | { type: 'REPO_ANALYSIS_TASK_CHUNK', payload: { id: string, chunk: string } }
   | { type: 'REPO_ANALYSIS_TASK_END', payload: { id: string, error?: string } }
@@ -128,11 +127,13 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     case 'FILE_REVIEW_FAILURE':
       return { ...state, status: 'error', error: action.payload };
     case 'START_REPO_ANALYSIS':
-      return { ...state, status: 'analyzing_repo', analysisTasks: [], allFilesWithContent: null, error: null, logs: ['[SYSTEM] Starting repository analysis...'], currentlyProcessingFile: null };
+      return { ...state, status: 'analyzing_repo', analysisTasks: [], allFilesWithContent: null, error: null, logs: [], currentlyProcessingFile: null };
     case 'FETCH_ANALYSIS_FILES_SUCCESS':
         return { ...state, allFilesWithContent: action.payload };
     case 'REPO_ANALYSIS_PROCESSING_FILE':
         return { ...state, currentlyProcessingFile: action.payload };
+    case 'REPO_ANALYSIS_SYSTEM_EVENT':
+        return { ...state, logs: [...state.logs, `[SYSTEM] ${action.payload}`] };
     case 'REPO_ANALYSIS_TASK_START':
         return { ...state, analysisTasks: [...state.analysisTasks, { id: action.payload.id, title: action.payload.title, status: 'in_progress', content: '', error: null }]};
     case 'REPO_ANALYSIS_TASK_CHUNK': {
@@ -142,8 +143,6 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
         return { ...state, analysisTasks: newTasks };
     }
     case 'REPO_ANALYSIS_TASK_END': {
-        // FIX: Explicitly define the new status to satisfy TypeScript's strict union type for AnalysisTask['status'].
-        // The ternary operator was being inferred as `string`, which is not assignable to the more specific status type.
         const newTasks = state.analysisTasks.map(task => {
             if (task.id !== action.payload.id) {
                 return task;
@@ -238,9 +237,6 @@ export default function App(): React.ReactElement {
       const filesToReview = results.map((result, index) => {
         const path = paths[index];
         if (result.status === 'fulfilled') return { path, content: result.value };
-        // FIX: The `reason` for a rejected promise from Promise.allSettled is of type `unknown`.
-        // We must safely handle this by checking if it's an Error instance before accessing `.message`,
-        // and providing a fallback string for other cases to satisfy the `string` type of the `error` property.
         const errorMessage = result.reason instanceof Error ? result.reason.message : 'An unknown error occurred.';
         return { path, content: '', error: errorMessage };
       });
@@ -260,6 +256,8 @@ export default function App(): React.ReactElement {
     }
 
     dispatch({ type: 'START_REPO_ANALYSIS' });
+    dispatch({ type: 'ADD_LOG', payload: '[SYSTEM] Initiating analysis request to backend...' });
+
     const { owner, repo } = parsed;
 
     try {
@@ -276,6 +274,9 @@ export default function App(): React.ReactElement {
       const stream = analyzeRepositoryStream(fetchedContents);
       for await (const event of stream) {
         switch(event.type) {
+            case 'system':
+                dispatch({ type: 'REPO_ANALYSIS_SYSTEM_EVENT', payload: event.message });
+                break;
             case 'processing_file':
                 dispatch({ type: 'REPO_ANALYSIS_PROCESSING_FILE', payload: event.path });
                 break;

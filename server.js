@@ -127,6 +127,8 @@ app.post('/api/analyze', async (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     
     try {
+        sendEvent(res, { type: 'system', message: 'Backend connection established. Preparing files...' });
+
         // Make the "context building" step visible to the client
         for (const file of files) {
             sendEvent(res, { type: 'processing_file', path: file.path });
@@ -150,14 +152,15 @@ app.post('/api/analyze', async (req, res) => {
             await performStreamingTask(res, task.id, task.title, task.prompt);
         }
 
-        res.end();
-
     } catch (error) {
-        console.error("Analysis process terminated due to an error.");
-        if (!res.headersSent) {
-           res.status(500).send('An unexpected error occurred during analysis.');
-        } else if (!res.writableEnded) {
-            // An error event has already been sent, just end the response.
+        console.error("Analysis process terminated due to an error:", error);
+        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+        // Ensure a final error event is sent to the client for display
+        sendEvent(res, { type: 'error', message: `A fatal error occurred on the server: ${errorMessage}` });
+        
+    } finally {
+        // Ensure the response is always ended.
+        if (!res.writableEnded) {
             res.end();
         }
     }

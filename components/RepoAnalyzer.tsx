@@ -1,14 +1,12 @@
-
 import React from 'react';
-import { marked } from 'marked';
 import type { AnalysisTask, RepoFileWithContent } from '../types';
 import { Spinner } from './Spinner';
 import { PlusCircleIcon } from './icons/PlusCircleIcon';
-import { AlertTriangleIcon } from './icons/AlertTriangleIcon';
 import { DownloadIcon } from './icons/DownloadIcon';
 import { parseGitHubUrl } from '../services/githubService';
 import { LogViewer } from './LogViewer';
 import { AnalysisTaskItem } from './AnalysisTask';
+import { InfoIcon } from './icons/InfoIcon';
 
 interface RepoAnalyzerProps {
   repoUrl: string;
@@ -52,52 +50,56 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTas
     URL.revokeObjectURL(link.href);
   };
 
-  const hasStartedAnalysis = analysisTasks.length > 0;
+  const hasStartedTasks = analysisTasks.length > 0;
   const fileBeingProcessed = currentlyProcessingFile ? originalFiles?.find(f => f.path === currentlyProcessingFile) : null;
-  const isProcessingContext = isLoading && currentlyProcessingFile && !hasStartedAnalysis;
+  const isProcessingContext = !hasStartedTasks && currentlyProcessingFile;
 
-  // Combined initial loading view: handles both file fetching and context building.
-  if (isLoading && !hasStartedAnalysis) {
+  let headerText = "Analysis in Progress...";
+  let subHeaderText = "Initializing...";
+
+  if (isLoading) {
+      if (isProcessingContext) {
+          headerText = "Building Analysis Context...";
+          subHeaderText = currentlyProcessingFile || '...';
+      } else if (hasStartedTasks) {
+          headerText = "Performing Analysis...";
+          const currentTask = analysisTasks.find(t => t.status === 'in_progress');
+          subHeaderText = currentTask ? currentTask.title : "Running analysis tasks...";
+      } else {
+          headerText = "Preparing Analysis...";
+          subHeaderText = "Fetching all repository files...";
+      }
+  } else if (hasStartedTasks) {
+      headerText = "Repository Architectural Analysis";
+      subHeaderText = "Analysis complete.";
+  }
+
+  // This is the initial "idle" state before any analysis has been triggered.
+  if (!isLoading && !hasStartedTasks) {
     return (
-      <div className="flex flex-col h-full bg-gray-800/50 rounded-lg border border-gray-700 p-4 space-y-4">
-        <div className="flex items-center flex-shrink-0">
-            <Spinner className="h-10 w-10 mr-4" />
-            <div>
-                <h2 className="text-xl font-semibold text-gray-200">
-                    {isProcessingContext ? 'Building Analysis Context...' : 'Preparing Analysis...'}
-                </h2>
-                <p className="text-sm text-purple-400 font-mono truncate max-w-md">
-                    {isProcessingContext ? currentlyProcessingFile : 'Fetching all repository files...'}
-                </p>
-            </div>
-        </div>
-
-        {isProcessingContext && fileBeingProcessed && (
-            <div className="bg-gray-900 p-3 rounded-md border border-gray-700 font-mono text-xs animate-pulse-once flex-shrink-0">
-                <pre className="text-gray-400 overflow-hidden text-ellipsis whitespace-pre-wrap h-24">
-                    {fileBeingProcessed.content.split('\n').slice(0, 10).join('\n') || '(Empty File)'}
-                </pre>
-            </div>
-        )}
-
-        <div className="w-full flex-grow min-h-0">
-            <LogViewer logs={logs} />
-        </div>
+      <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
+        <InfoIcon className="h-12 w-12 mb-4" />
+        <h2 className="text-xl font-semibold">Ready for Analysis</h2>
+        <p className="text-center">
+          Use the "Analyze Entire Repository" button for a high-level architectural review,<br/>
+          or select individual files to start a detailed code review.
+        </p>
       </div>
     );
   }
 
+  // This is the new, unified view for both "in-progress" and "completed" analysis states.
+  // It ensures the logs and task list are always visible once the process starts.
   return (
     <div className="flex flex-col h-full space-y-4">
+      {/* 1. Unified Header */}
       <div className="flex-shrink-0 bg-gray-800/50 rounded-lg p-4 border border-gray-700 flex justify-between items-center">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-200">Repository Architectural Analysis</h2>
-            {isLoading && (
-                <div className="flex items-center gap-2 text-sm text-purple-400 mt-1">
-                    <Spinner className="w-4 h-4" />
-                    <span>Analysis in progress...</span>
-                </div>
-            )}
+          <div className="flex items-center min-w-0">
+            {isLoading && <Spinner className="h-8 w-8 mr-4" />}
+            <div className="min-w-0">
+                <h2 className="text-lg font-semibold text-gray-200 truncate">{headerText}</h2>
+                <p className={`text-sm font-mono truncate ${isLoading ? 'text-purple-400' : 'text-green-400'}`}>{subHeaderText}</p>
+            </div>
           </div>
           <div className="flex items-center space-x-2">
               <button
@@ -110,28 +112,39 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTas
                   <span>Export</span>
               </button>
               <button
-              onClick={onReset}
-              className="flex items-center space-x-2 border border-purple-600 text-purple-300 font-semibold rounded-md px-4 py-2 hover:bg-purple-600/20 transition-colors duration-200"
+                onClick={onReset}
+                className="flex items-center space-x-2 border border-purple-600 text-purple-300 font-semibold rounded-md px-4 py-2 hover:bg-purple-600/20 transition-colors duration-200"
               >
-              <PlusCircleIcon className="w-5 h-5" />
-              <span>New Review</span>
+                <PlusCircleIcon className="w-5 h-5" />
+                <span>New Review</span>
               </button>
           </div>
       </div>
-      
-      <div className="flex-grow space-y-4 overflow-y-auto pr-2 p-1">
-          {!hasStartedAnalysis && (
-              <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                  <AlertTriangleIcon className="h-12 w-12 mb-4" />
-                  <h2 className="text-xl font-semibold">Analysis Not Started</h2>
-                  <p>Click "Analyze Entire Repository" to begin.</p>
+
+      {/* 2. Main Content Area (Tasks and Snippets) */}
+      <div className="flex-grow min-h-0 overflow-y-auto pr-2 space-y-4 custom-scrollbar">
+          {isProcessingContext && fileBeingProcessed && (
+              <div className="bg-gray-900 p-3 rounded-md border border-gray-700 font-mono text-xs animate-pulse-once">
+                  <h4 className="text-gray-500 mb-2">Processing: {fileBeingProcessed.path}</h4>
+                  <pre className="text-gray-400 overflow-hidden text-ellipsis whitespace-pre-wrap h-24">
+                      {fileBeingProcessed.content.split('\n').slice(0, 10).join('\n') || '(Empty File)'}
+                  </pre>
               </div>
           )}
-
-          {analysisTasks.map(task => (
-              <AnalysisTaskItem key={task.id} task={task} />
-          ))}
           
+          {hasStartedTasks ? (
+            analysisTasks.map(task => <AnalysisTaskItem key={task.id} task={task} />)
+          ) : (
+            <div className="text-center text-gray-500 p-8">
+              <Spinner className="w-8 h-8 mx-auto mb-4" />
+              Waiting for analysis tasks...
+            </div>
+          )}
+      </div>
+      
+      {/* 3. Persistent Log Viewer */}
+      <div className="w-full flex-shrink-0 h-1/3 min-h-48">
+          <LogViewer logs={logs} />
       </div>
     </div>
   );

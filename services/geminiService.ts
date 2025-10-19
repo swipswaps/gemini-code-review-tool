@@ -1,4 +1,3 @@
-
 import { CODE_SEPARATOR } from '../utils/constants';
 // FIX: Removed unused HolisticAnalysisResult type
 import type { RepoAnalysisStreamEvent } from '../types';
@@ -85,13 +84,20 @@ export async function* analyzeRepositoryStream(
         buffer = lines.pop() || ''; // Keep the last, possibly incomplete, line
 
         for (const line of lines) {
-            if (line.startsWith('EVENT: ')) {
+            const trimmedLine = line.trim();
+            if (trimmedLine.startsWith('EVENT: ')) {
                 try {
-                    const event = JSON.parse(line.substring(7));
+                    const event = JSON.parse(trimmedLine.substring(7));
                     yield event as RepoAnalysisStreamEvent;
                 } catch(e) {
-                    console.error("Failed to parse analysis stream event:", e, "Line:", line);
+                    console.error("Failed to parse analysis stream event:", e, "Line:", trimmedLine);
+                    // Yield a structured error event so the UI can display it for troubleshooting.
+                    yield { type: 'error', message: `[CLIENT PARSE ERROR] Failed to parse event: ${trimmedLine}` };
                 }
+            } else if (trimmedLine) { // If the line is not empty and not a standard event, treat it as a server log/error.
+                console.warn("Received non-event line from analysis stream:", trimmedLine);
+                // Yield a structured error event to make this visible in the UI for troubleshooting.
+                yield { type: 'error', message: `[SERVER LOG] ${trimmedLine}` };
             }
         }
     }
