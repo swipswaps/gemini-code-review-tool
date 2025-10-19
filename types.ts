@@ -62,4 +62,5 @@ export interface ReviewState {
 // Type for streaming analysis updates from the server
 export type RepoAnalysisStreamEvent = 
     | { type: 'status', message: string }
-    | { type: 'data', payload: HolisticAnalysisResult };
+    | { type: 'data', payload: HolisticAnalysisResult }
+    | { type: 'error', message: string };

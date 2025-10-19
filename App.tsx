@@ -1,7 +1,3 @@
-
-
-
-
 import React, { useReducer, useCallback, useEffect } from 'react';
 import type { RepoTreeNode, HolisticAnalysisResult, RepoFileWithContent, RepoTreeFolder, RepoAnalysisStreamEvent } from './types';
 import { fetchRepoRoot, fetchFolderContents, fetchAllFileContents, fetchFileContent, parseGitHubUrl } from './services/githubService';
@@ -236,11 +232,13 @@ export default function App(): React.ReactElement {
     const { owner, repo } = parsed;
     let fetchedContents: RepoFileWithContent[] = [];
     try {
+      dispatch({ type: 'ADD_LOG', payload: '[SYSTEM] Starting recursive file fetch...' });
       const onFetchProgress = (message: string) => {
         dispatch({ type: 'ADD_LOG', payload: message });
       };
       
       fetchedContents = await fetchAllFileContents(owner, repo, repoTree, githubToken, onFetchProgress);
+      dispatch({ type: 'ADD_LOG', payload: `[SYSTEM] Fetched ${fetchedContents.length} files. Sending to backend for analysis.` });
       
       const stream = analyzeRepositoryStream(fetchedContents);
       for await (const event of stream) {
@@ -249,6 +247,8 @@ export default function App(): React.ReactElement {
           dispatch({ type: 'ADD_LOG', payload: `[ANALYSIS] ${event.message}` });
         } else if (event.type === 'data') {
           dispatch({ type: 'REPO_ANALYSIS_DATA_CHUNK', payload: event.payload });
+        } else if (event.type === 'error') {
+          dispatch({ type: 'ADD_LOG', payload: `[ERROR] Analysis step failed: ${event.message}` });
         }
       }
       dispatch({ type: 'REPO_ANALYSIS_COMPLETE', payload: { files: fetchedContents } });

@@ -92,6 +92,25 @@ app.post('/api/lint', async (req, res) => {
     }
 });
 
+
+// Helper to perform an analysis step with status updates
+const performAnalysisStep = async (res, statusMessage, geminiCall) => {
+    sendEvent(res, { type: 'status', message: statusMessage });
+    try {
+        const result = await geminiCall();
+        if (result) { // Only send data if there is a result
+            sendEvent(res, { type: 'data', payload: result });
+        }
+        return result;
+    } catch (error) {
+        console.error(`Error during "${statusMessage}":`, error);
+        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
+        sendEvent(res, { type: 'error', message: `Failed during: ${statusMessage}. Error: ${errorMessage}` });
+        throw error; // Propagate error to stop the analysis
+    }
+};
+
+
 // Streaming endpoint for holistic analysis
 app.post('/api/analyze', async (req, res) => {
     const { files } = req.body;
@@ -120,42 +139,52 @@ app.post('/api/analyze', async (req, res) => {
         }
 
         // Step 2: Dependency Review
-        const packageJsonFile = files.find(f => f.path.endsWith('package.json'));
-        if (packageJsonFile) {
-            sendEvent(res, { type: 'status', message: 'Reviewing package.json for dependencies...' });
+        await performAnalysisStep(res, 'Reviewing package.json for dependencies...', async () => {
+            const packageJsonFile = files.find(f => f.path.endsWith('package.json'));
+            if (!packageJsonFile) {
+                sendEvent(res, { type: 'status', message: 'package.json not found, skipping dependency review.' });
+                return null; // Return null to indicate no data
+            }
             const depReviewResponse = await ai.models.generateContent({
                 model: "gemini-2.5-pro",
                 contents: `Analyze this package.json for potential issues like outdated dependencies, security vulnerabilities, or strange configurations. Provide a markdown summary of your analysis and a list of suggestions. package.json:\n${packageJsonFile.content}`,
                 config: { responseMimeType: "application/json", responseSchema: { type: Type.OBJECT, properties: { analysis: { type: Type.STRING }, suggestions: { type: Type.ARRAY, items: { type: Type.STRING }}}}}
             });
-            sendEvent(res, { type: 'data', payload: { dependencyReview: JSON.parse(depReviewResponse.text.trim()) }});
-        }
+            return { dependencyReview: JSON.parse(depReviewResponse.text.trim()) };
+        });
 
         // Step 3: Error Trends
-        sendEvent(res, { type: 'status', message: 'Identifying common error trends...' });
-        const errorTrendsResponse = await ai.models.generateContent({
-            model: "gemini-2.5-pro",
-            contents: `Identify up to 3 recurring problems or anti-patterns in this codebase. For each trend, provide a description and a list of files affected. Codebase:\n${fileContentsString}`,
-            config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { trendDescription: { type: Type.STRING }, filesAffected: { type: Type.ARRAY, items: { type: Type.STRING } } } } } }
+        await performAnalysisStep(res, 'Identifying common error trends...', async () => {
+             const errorTrendsResponse = await ai.models.generateContent({
+                model: "gemini-2.5-pro",
+                contents: `Identify up to 3 recurring problems or anti-patterns in this codebase. For each trend, provide a description and a list of files affected. Codebase:\n${fileContentsString}`,
+                config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { trendDescription: { type: Type.STRING }, filesAffected: { type: Type.ARRAY, items: { type: Type.STRING } } } } } }
+            });
+            return { errorTrends: JSON.parse(errorTrendsResponse.text.trim()) };
         });
-        sendEvent(res, { type: 'data', payload: { errorTrends: JSON.parse(errorTrendsResponse.text.trim()) }});
 
         // Step 4: Suggested Fixes
-        sendEvent(res, { type: 'status', message: 'Generating suggested fixes...' });
-        const suggestedFixesResponse = await ai.models.generateContent({
-            model: "gemini-2.5-pro",
-            contents: `Based on the codebase, provide a list of up to 5 specific, actionable improvements. For each, give the file path, a markdown description of the fix, and the complete, corrected code for that file. Codebase:\n${fileContentsString}`,
-            config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { filePath: { type: Type.STRING }, description: { type: Type.STRING }, correctedCode: { type: Type.STRING } } } } }
+        await performAnalysisStep(res, 'Generating suggested fixes...', async () => {
+            const suggestedFixesResponse = await ai.models.generateContent({
+                model: "gemini-2.5-pro",
+                contents: `Based on the codebase, provide a list of up to 5 specific, actionable improvements. For each, give the file path, a markdown description of the fix, and the complete, corrected code for that file. Codebase:\n${fileContentsString}`,
+                config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { filePath: { type: Type.STRING }, description: { type: Type.STRING }, correctedCode: { type: Type.STRING } } } } }
+            });
+            return { suggestedFixes: JSON.parse(suggestedFixesResponse.text.trim()) };
         });
-        sendEvent(res, { type: 'data', payload: { suggestedFixes: JSON.parse(suggestedFixesResponse.text.trim()) }});
 
         sendEvent(res, { type: 'status', message: 'Analysis complete.' });
         res.end();
 
     } catch (error) {
-        console.error("Error in /api/analyze stream:", error);
-        sendEvent(res, { type: 'status', message: `An error occurred: ${error.message}` });
-        res.end();
+        // The error is already logged and sent to the client by performAnalysisStep,
+        // so we just need to ensure the response is properly ended.
+        console.error("Analysis process terminated due to an error.");
+        if (!res.headersSent) {
+           res.status(500).send('An unexpected error occurred during analysis.');
+        } else if (!res.writableEnded) {
+            res.end();
+        }
     }
 });
 

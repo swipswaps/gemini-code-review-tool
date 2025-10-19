@@ -1,7 +1,3 @@
-
-
-
-
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangleIcon } from './icons/AlertTriangleIcon';
 
