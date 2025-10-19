@@ -1,4 +1,3 @@
-
 import type { RepoTreeNode, RepoTreeFolder, RepoTreeFile } from '../types';
 
 const API_BASE = 'https://api.github.com';
@@ -63,7 +62,7 @@ export const fetchFolderContents = async (owner: string, repo: string, path: str
     const contentsResponse = await fetchWithTimeout(`${API_BASE}/repos/${owner}/${repo}/contents/${path}`, { headers });
     if (!contentsResponse.ok) {
         if (contentsResponse.status === 404) throw new Error(`Folder not found: ${path}`);
-        if (contentsResponse.status === 403) throw new Error('GitHub API rate limit exceeded. Please provide a Personal Access Token.');
+        if (contentsResponse.status === 403) throw new Error('GitHub API rate limit exceeded. Please provide a Personal Access Token to continue.');
         throw new Error(`Failed to fetch folder contents for ${path} (status: ${contentsResponse.status}).`);
     }
 
@@ -126,14 +125,17 @@ export const fetchAllFilePaths = async (
                 foldersToScan.push(...[...children].reverse());
             } catch (e) {
                 const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-                onProgress?.(`ERROR scanning directory ${node.path || '/'}: ${errorMessage}`);
+                // CRITICAL FIX: Report the actual error to the user for troubleshooting.
+                onProgress?.(`[ERROR] Failed to scan directory '${node.path || '/'}': ${errorMessage}`);
                 console.error(`Skipping folder ${node.path} due to fetch error:`, e);
+                // We throw here to halt the process, as it cannot continue reliably.
+                throw new Error(`Halting discovery. Could not scan directory: ${node.path}. Reason: ${errorMessage}`);
             }
         }
         
         // Safety break to avoid excessive API calls during development/testing.
         if (allPaths.length >= 100) {
-            onProgress?.(`Reached 100 files. Limiting analysis to the first 100 files found.`);
+            onProgress?.(`[SYSTEM] Reached 100 files. Limiting analysis to the first 100 files found.`);
             console.warn(`Reached 100 files limit.`);
             return allPaths.slice(0, 100);
         }
