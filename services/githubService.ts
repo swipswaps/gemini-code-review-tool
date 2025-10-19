@@ -1,3 +1,4 @@
+
 import type { RepoTreeNode, RepoTreeFolder, RepoTreeFile } from '../types';
 
 const API_BASE = 'https://api.github.com';
@@ -92,16 +93,14 @@ export const fetchFolderContents = async (owner: string, repo: string, path: str
     return sortNodes(nodes);
 };
 
-// Traverses the entire repository structure to get a flat list of all file paths.
-// This is much faster than fetching content for every file.
-export const fetchAllFilePaths = async (
+// Traverses the repository structure, yielding file paths as they are discovered.
+export async function* streamAllFilePaths(
   owner: string,
   repo: string,
   token: string | undefined,
   initialTree: RepoTreeNode[],
   onProgress?: (message: string) => void
-): Promise<string[]> => {
-    const allPaths: string[] = [];
+): AsyncGenerator<string> {
     // Start with a copy of the initial tree to avoid modifying the original state directly.
     const foldersToScan: RepoTreeNode[] = [...initialTree]; 
     const scannedPaths = new Set<string>();
@@ -115,7 +114,7 @@ export const fetchAllFilePaths = async (
         scannedPaths.add(node.path);
 
         if (node.type === 'file') {
-            allPaths.push(node.path);
+            yield node.path;
         } else if (node.type === 'folder') {
             onProgress?.(`Scanning directory: ${node.path || '/'}`);
             try {
@@ -125,20 +124,10 @@ export const fetchAllFilePaths = async (
                 foldersToScan.push(...[...children].reverse());
             } catch (e) {
                 const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-                // CRITICAL FIX: Report the actual error to the user for troubleshooting.
                 onProgress?.(`[ERROR] Failed to scan directory '${node.path || '/'}': ${errorMessage}`);
-                console.error(`Skipping folder ${node.path} due to fetch error:`, e);
-                // We throw here to halt the process, as it cannot continue reliably.
+                // Re-throw the error to halt the generator and signal the failure to the caller.
                 throw new Error(`Halting discovery. Could not scan directory: ${node.path}. Reason: ${errorMessage}`);
             }
         }
-        
-        // Safety break to avoid excessive API calls during development/testing.
-        if (allPaths.length >= 100) {
-            onProgress?.(`[SYSTEM] Reached 100 files. Limiting analysis to the first 100 files found.`);
-            console.warn(`Reached 100 files limit.`);
-            return allPaths.slice(0, 100);
-        }
     }
-    return allPaths;
 };

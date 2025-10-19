@@ -25,13 +25,13 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error("Uncaught error:", error, errorInfo);
   }
   
-  // FIX: The 'handleReset' method was not bound to the component instance, causing 'this' to be undefined when called as an event handler. It has been converted to an arrow function to preserve the correct 'this' context.
+  // FIX: The 'handleReset' method is converted to an arrow function to preserve the correct 'this' context when called as an event handler.
   handleReset = () => {
     if (this.props.onReset) {
       this.props.onReset();
     }
     this.setState({ hasError: false, error: null });
-  }
+  };
 
   render() {
     if (this.state.hasError) {

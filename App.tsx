@@ -1,7 +1,8 @@
 
+
 import React, { useReducer, useCallback, useEffect } from 'react';
 import type { RepoTreeNode, RepoFileWithContent, RepoTreeFolder, AnalysisTask } from './types';
-import { fetchRepoRoot, fetchFolderContents, fetchAllFilePaths, parseGitHubUrl } from './services/githubService';
+import { fetchRepoRoot, fetchFolderContents, streamAllFilePaths, parseGitHubUrl } from './services/githubService';
 import { analyzeRepositoryStream } from './services/geminiService';
 import { RepoInput } from './components/RepoInput';
 import { FileBrowser } from './components/FileBrowser';
@@ -253,13 +254,14 @@ export default function App(): React.ReactElement {
           if (result.status === 'fulfilled') {
               filesToReview.push(result.value);
           } else {
-              // FIX: The 'reason' for a rejected promise from Promise.allSettled is of type 'unknown'. Added a type guard to safely access the error message.
-              const errorMessage = result.reason instanceof Error ? result.reason.message : 'An unknown error occurred.';
+              // FIX: The 'reason' for a rejected promise is of type 'unknown'. Handle it safely.
+              const errorMessage = result.reason instanceof Error ? result.reason.message : String(result.reason ?? 'An unknown error occurred.');
               filesToReview.push({ path, content: '', error: errorMessage });
           }
       });
       dispatch({ type: 'FETCH_REVIEW_FILES_SUCCESS', payload: filesToReview });
     } catch (err) {
+      // FIX: The error object in a catch block is of type 'unknown'. Handle it safely.
       const message = err instanceof Error ? err.message : 'An unknown error occurred while fetching files.';
       dispatch({ type: 'FETCH_REVIEW_FILES_FAILURE', payload: message });
     }
@@ -278,18 +280,18 @@ export default function App(): React.ReactElement {
       }
       const { owner, repo } = parsed;
       
-      // Step 1: Fetch all file paths without content. This is fast and reliable.
-      dispatch({ type: 'ADD_LOG', payload: '[SYSTEM] Starting recursive file path discovery...' });
-      const onProgress = (message: string) => dispatch({ type: 'ADD_LOG', payload: message });
-      const allPaths = await fetchAllFilePaths(owner, repo, githubToken, repoTree, onProgress);
+      dispatch({ type: 'ADD_LOG', payload: '[SYSTEM] Starting real-time file discovery and analysis stream...' });
       
-      dispatch({ type: 'ADD_LOG', payload: `[SYSTEM] Found ${allPaths.length} files. Sending list to backend for processing.` });
-      
-      // Step 2: Start the backend analysis stream, sending only the paths.
-      // The backend will now fetch content and stream progress.
-      const stream = analyzeRepositoryStream(repoUrl, allPaths, githubToken);
+      const onDiscoveryProgress = (message: string) => dispatch({ type: 'ADD_LOG', payload: message });
 
-      for await (const event of stream) {
+      // 1. Create a generator that yields file paths as they are discovered.
+      const pathsStream = streamAllFilePaths(owner, repo, githubToken, repoTree, onDiscoveryProgress);
+
+      // 2. Pass the generator to the analysis service, which streams them to the backend.
+      const analysisEvents = analyzeRepositoryStream(repoUrl, pathsStream, githubToken);
+      
+      // 3. Process events from the backend as they arrive.
+      for await (const event of analysisEvents) {
         switch(event.type) {
             case 'system':
                 dispatch({ type: 'REPO_ANALYSIS_SYSTEM_EVENT', payload: event.message });

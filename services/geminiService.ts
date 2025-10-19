@@ -1,3 +1,4 @@
+
 import type { RepoAnalysisStreamEvent } from '../types';
 
 async function* streamFetch(response: Response): AsyncGenerator<string> {
@@ -56,14 +57,38 @@ export async function lintCode(code: string, fileName: string): Promise<string> 
 
 export async function* analyzeRepositoryStream(
   repoUrl: string,
-  paths: string[],
+  pathsStream: AsyncGenerator<string>,
   githubToken?: string
 ): AsyncGenerator<RepoAnalysisStreamEvent> {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+        async start(controller) {
+          try {
+            // Send headers as a JSON string on the first line.
+            const headers = { repoUrl, githubToken };
+            controller.enqueue(encoder.encode(JSON.stringify(headers) + '\n'));
+
+            // Stream each path from the generator as it becomes available.
+            for await (const path of pathsStream) {
+                controller.enqueue(encoder.encode(path + '\n'));
+            }
+            controller.close();
+          } catch (error) {
+             // If the pathsStream generator throws an error (e.g., GitHub API fails),
+             // propagate the error to the readable stream.
+             controller.error(error);
+          }
+        }
+    });
+
     const response = await fetch('/api/analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repoUrl, paths, githubToken }),
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: stream,
+        // @ts-ignore - This is required for streaming request bodies in some environments.
+        duplex: 'half',
     });
+
 
      if (!response.ok) {
         const errorText = await response.text();

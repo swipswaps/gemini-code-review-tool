@@ -125,101 +125,138 @@ const performStreamingTask = async (res, taskId, taskTitle, prompt) => {
     }
 };
 
-const runAnalysis = async (res, body) => {
-    try {
-        const { repoUrl, paths, githubToken } = JSON.parse(body);
-        if (!repoUrl || !paths || !Array.isArray(paths)) {
-            throw new Error('Missing repoUrl or paths in request body.');
-        }
-        sendEvent(res, { type: 'system', message: `Received ${paths.length} file paths. Starting processing.` });
-        
-        const parsedRepo = parseGitHubUrl(repoUrl);
-        if (!parsedRepo) throw new Error("Invalid GitHub URL provided.");
-        const { owner, repo } = parsedRepo;
-
-        const MAX_CONTEXT_CHAR_LIMIT = 750000; // A safe character limit for the prompt context
-        let fileContentsString = '';
-        let totalChars = 0;
-        let filesIncludedCount = 0;
-
-        sendEvent(res, { type: 'system', message: 'Fetching repository files from GitHub...' });
-        
-        for (const path of paths) {
-            let content = '';
-            try {
-                content = await fetchFileContent(owner, repo, path, githubToken);
-
-                // Ensure at least one file is included, but stop if adding the next one exceeds the limit.
-                if (filesIncludedCount > 0 && totalChars + content.length > MAX_CONTEXT_CHAR_LIMIT) {
-                    sendEvent(res, { type: 'system', message: `[SYSTEM] Context limit of ${MAX_CONTEXT_CHAR_LIMIT} characters reached. Analyzing the first ${filesIncludedCount} files.` });
-                    break; // Stop the loop, don't process this file or any after it.
-                }
-
-                sendEvent(res, { type: 'processing_file', path: path, content: content });
-                fileContentsString += `// FILE: ${path}\n${content}\n\n---\n\n`;
-                totalChars += content.length;
-                filesIncludedCount++;
-
-            } catch (fetchError) {
-                console.warn(`Could not fetch ${path}:`, fetchError.message);
-                const errorMessage = `// Error fetching content: ${fetchError.message}`;
-                // Send an event so UI can show the error for this file, but don't add to Gemini context.
-                sendEvent(res, { type: 'processing_file', path: path, content: errorMessage });
-            }
-            // Small delay to prevent overwhelming GitHub API and to allow UI to update
-            await new Promise(resolve => setTimeout(resolve, 50)); 
-        }
-        
-        if (totalChars === 0 && paths.length > 0) {
-            sendEvent(res, { type: 'system', message: '[SYSTEM] Could not fetch content for any files. Aborting analysis.' });
-            // End the execution here as there's nothing to analyze.
-            return;
-        }
-        
-        sendEvent(res, { type: 'system', message: `Context built with ${filesIncludedCount} files. Starting analysis tasks.` });
-        
-        const tasks = [
-            { id: 'summary', title: '1. Project Summary', prompt: `Provide a concise, one-paragraph summary of this project's purpose based on its file structure and code. Codebase:\n${fileContentsString}` },
-            { id: 'tech_stack', title: '2. Tech Stack Analysis', prompt: `Analyze the tech stack. Identify the primary languages, frameworks, and key libraries. Present as a markdown list. Codebase:\n${fileContentsString}` },
-            { id: 'architecture', title: '3. Architectural Review', prompt: `Critique the overall architecture. Discuss strengths, weaknesses, and potential improvements in markdown format. Codebase:\n${fileContentsString}` },
-            { id: 'error_trends', title: '4. Common Error Trends', prompt: `Identify up to 3 recurring problems or anti-patterns. For each, describe the trend and list affected files. Codebase:\n${fileContentsString}` },
-            { id: 'suggestions', title: '5. Actionable Suggestions', prompt: `List up to 5 specific, actionable improvements for this codebase. Codebase:\n${fileContentsString}` },
-        ];
-        
-        for (const task of tasks) {
-            await performStreamingTask(res, task.id, task.title, task.prompt);
-        }
-
-    } catch (error) {
-        console.error("Analysis process terminated due to an error:", error);
-        const errorMessage = error instanceof Error ? error.message : 'An unknown server error occurred';
-        sendEvent(res, { type: 'error', message: `A fatal error occurred: ${errorMessage}` });
-    } finally {
-        if (!res.writableEnded) res.end();
-    }
-}
-
-
 const analyzeRepoRequestHandler = (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     
     sendEvent(res, { type: 'system', message: 'Backend connection established. Receiving file list...' });
-
-    // CRITICAL FIX: Explicitly flush the headers and the first event to the client.
-    // This forces Node.js to send the initial message immediately, bypassing any network buffering.
     if (res.flushHeaders) {
         res.flushHeaders();
     }
 
-    let body = '';
+    let buffer = '';
+    let headersParsed = false;
+    let repoUrl, githubToken, owner, repo;
+
+    const paths = [];
+    const MAX_FILES_FOR_GEMINI = 100; // Safety limit from githubService
+
     req.on('data', chunk => {
-        body += chunk.toString();
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line
+
+        for (const line of lines) {
+            if (!line.trim()) continue;
+
+            if (!headersParsed) {
+                try {
+                    const headers = JSON.parse(line);
+                    repoUrl = headers.repoUrl;
+                    githubToken = headers.githubToken;
+                    const parsedRepo = parseGitHubUrl(repoUrl);
+                    if (!parsedRepo) {
+                        throw new Error("Invalid GitHub URL in request stream.");
+                    }
+                    owner = parsedRepo.owner;
+                    repo = parsedRepo.repo;
+                    headersParsed = true;
+                    sendEvent(res, { type: 'system', message: `Headers parsed. Streaming file paths for ${owner}/${repo}...` });
+
+                } catch (e) {
+                    const errorMessage = e instanceof Error ? e.message : 'Unknown parsing error.';
+                    console.error("Error parsing headers:", errorMessage);
+                    sendEvent(res, { type: 'error', message: `Failed to parse request headers: ${errorMessage}` });
+                    if (!res.writableEnded) res.end();
+                    req.destroy();
+                    return;
+                }
+            } else {
+                 if (paths.length >= MAX_FILES_FOR_GEMINI) {
+                    if (paths.length === MAX_FILES_FOR_GEMINI) {
+                        sendEvent(res, { type: 'system', message: `[SYSTEM] Reached file limit of ${MAX_FILES_FOR_GEMINI}. Ignoring further paths.` });
+                        paths.length++; // Increment to stop this message from repeating
+                    }
+                    // Do nothing more if limit is reached
+                } else {
+                    paths.push(line);
+                    // This reports the status of each "push" (each line is a push here)
+                    sendEvent(res, { type: 'system', message: `Received path #${paths.length}: ${line}` });
+                }
+            }
+        }
     });
 
-    req.on('end', () => {
-        // Yield to the event loop with setTimeout to ensure the initial connection message is sent
-        // before we start the potentially long-running analysis process. This fixes the stall.
-        setTimeout(() => runAnalysis(res, body), 100);
+    req.on('end', async () => {
+        // Process the final buffered line if it exists
+        if (buffer.trim() && headersParsed && paths.length < MAX_FILES_FOR_GEMINI) {
+            paths.push(buffer.trim());
+            sendEvent(res, { type: 'system', message: `Received path #${paths.length}: ${buffer.trim()}` });
+        }
+        
+        if (!headersParsed) {
+            sendEvent(res, { type: 'error', message: 'Request ended before headers were received.' });
+            return res.end();
+        }
+
+        try {
+            sendEvent(res, { type: 'system', message: `All ${paths.length > MAX_FILES_FOR_GEMINI ? MAX_FILES_FOR_GEMINI : paths.length} file paths received. Building analysis context from GitHub...` });
+            
+            const MAX_CONTEXT_CHAR_LIMIT = 750000;
+            let fileContentsString = '';
+            let totalChars = 0;
+            let filesIncludedCount = 0;
+
+            for (const path of paths) {
+                 if (paths.length > MAX_FILES_FOR_GEMINI && paths.indexOf(path) >= MAX_FILES_FOR_GEMINI) continue;
+
+                let content = '';
+                try {
+                    content = await fetchFileContent(owner, repo, path, githubToken);
+
+                    if (filesIncludedCount > 0 && totalChars + content.length > MAX_CONTEXT_CHAR_LIMIT) {
+                        sendEvent(res, { type: 'system', message: `[SYSTEM] Context limit of ${MAX_CONTEXT_CHAR_LIMIT} characters reached. Analyzing the first ${filesIncludedCount} files.` });
+                        break;
+                    }
+
+                    sendEvent(res, { type: 'processing_file', path: path, content: content });
+                    fileContentsString += `// FILE: ${path}\n${content}\n\n---\n\n`;
+                    totalChars += content.length;
+                    filesIncludedCount++;
+
+                } catch (fetchError) {
+                    console.warn(`Could not fetch ${path}:`, fetchError.message);
+                    const errorMessage = `// Error fetching content: ${fetchError.message}`;
+                    sendEvent(res, { type: 'processing_file', path: path, content: errorMessage });
+                }
+                await new Promise(resolve => setTimeout(resolve, 50)); 
+            }
+            
+            if (totalChars === 0) {
+                sendEvent(res, { type: 'system', message: '[SYSTEM] Could not fetch content for any files. Aborting analysis.' });
+                return;
+            }
+            
+            sendEvent(res, { type: 'system', message: `Context built with ${filesIncludedCount} files. Starting analysis tasks.` });
+            
+            const tasks = [
+                { id: 'summary', title: '1. Project Summary', prompt: `Provide a concise, one-paragraph summary of this project's purpose based on its file structure and code. Codebase:\n${fileContentsString}` },
+                { id: 'tech_stack', title: '2. Tech Stack Analysis', prompt: `Analyze the tech stack. Identify the primary languages, frameworks, and key libraries. Present as a markdown list. Codebase:\n${fileContentsString}` },
+                { id: 'architecture', title: '3. Architectural Review', prompt: `Critique the overall architecture. Discuss strengths, weaknesses, and potential improvements in markdown format. Codebase:\n${fileContentsString}` },
+                { id: 'error_trends', title: '4. Common Error Trends', prompt: `Identify up to 3 recurring problems or anti-patterns. For each, describe the trend and list affected files. Codebase:\n${fileContentsString}` },
+                { id: 'suggestions', title: '5. Actionable Suggestions', prompt: `List up to 5 specific, actionable improvements for this codebase. Codebase:\n${fileContentsString}` },
+            ];
+            
+            for (const task of tasks) {
+                await performStreamingTask(res, task.id, task.title, task.prompt);
+            }
+
+        } catch (error) {
+            console.error("Analysis process terminated due to an error:", error);
+            const errorMessage = error instanceof Error ? error.message : 'An unknown server error occurred';
+            sendEvent(res, { type: 'error', message: `A fatal error occurred: ${errorMessage}` });
+        } finally {
+            if (!res.writableEnded) res.end();
+        }
     });
 
     req.on('error', (err) => {
