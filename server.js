@@ -124,6 +124,59 @@ const performStreamingTask = async (res, taskId, taskTitle, prompt) => {
     }
 };
 
+const runAnalysis = async (res, body) => {
+    try {
+        const { repoUrl, paths, githubToken } = JSON.parse(body);
+        if (!repoUrl || !paths || !Array.isArray(paths)) {
+            throw new Error('Missing repoUrl or paths in request body.');
+        }
+        sendEvent(res, { type: 'system', message: `Received ${paths.length} file paths. Starting processing.` });
+        
+        const parsedRepo = parseGitHubUrl(repoUrl);
+        if (!parsedRepo) throw new Error("Invalid GitHub URL provided.");
+        const { owner, repo } = parsedRepo;
+
+        let fileContentsString = '';
+        sendEvent(res, { type: 'system', message: 'Fetching repository files from GitHub...' });
+        
+        for (const path of paths) {
+            let content = '';
+            try {
+                content = await fetchFileContent(owner, repo, path, githubToken);
+                sendEvent(res, { type: 'processing_file', path: path, content: content });
+            } catch (fetchError) {
+                console.warn(`Could not fetch ${path}:`, fetchError.message);
+                content = `// Error fetching content: ${fetchError.message}`;
+                sendEvent(res, { type: 'processing_file', path: path, content: content });
+            }
+            fileContentsString += `// FILE: ${path}\n${content}\n\n---\n\n`;
+            await new Promise(resolve => setTimeout(resolve, 10)); 
+        }
+        
+        sendEvent(res, { type: 'system', message: 'All files processed. Starting analysis tasks.' });
+        
+        const tasks = [
+            { id: 'summary', title: '1. Project Summary', prompt: `Provide a concise, one-paragraph summary of this project's purpose based on its file structure and code. Codebase:\n${fileContentsString}` },
+            { id: 'tech_stack', title: '2. Tech Stack Analysis', prompt: `Analyze the tech stack. Identify the primary languages, frameworks, and key libraries. Present as a markdown list. Codebase:\n${fileContentsString}` },
+            { id: 'architecture', title: '3. Architectural Review', prompt: `Critique the overall architecture. Discuss strengths, weaknesses, and potential improvements in markdown format. Codebase:\n${fileContentsString}` },
+            { id: 'error_trends', title: '4. Common Error Trends', prompt: `Identify up to 3 recurring problems or anti-patterns. For each, describe the trend and list affected files. Codebase:\n${fileContentsString}` },
+            { id: 'suggestions', title: '5. Actionable Suggestions', prompt: `List up to 5 specific, actionable improvements for this codebase. Codebase:\n${fileContentsString}` },
+        ];
+        
+        for (const task of tasks) {
+            await performStreamingTask(res, task.id, task.title, task.prompt);
+        }
+
+    } catch (error) {
+        console.error("Analysis process terminated due to an error:", error);
+        const errorMessage = error instanceof Error ? error.message : 'An unknown server error occurred';
+        sendEvent(res, { type: 'error', message: `A fatal error occurred: ${errorMessage}` });
+    } finally {
+        if (!res.writableEnded) res.end();
+    }
+}
+
+
 const analyzeRepoRequestHandler = (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     
@@ -134,56 +187,10 @@ const analyzeRepoRequestHandler = (req, res) => {
         body += chunk.toString();
     });
 
-    req.on('end', async () => {
-        try {
-            const { repoUrl, paths, githubToken } = JSON.parse(body);
-            if (!repoUrl || !paths || !Array.isArray(paths)) {
-                throw new Error('Missing repoUrl or paths in request body.');
-            }
-            sendEvent(res, { type: 'system', message: `Received ${paths.length} file paths. Starting processing.` });
-            
-            const parsedRepo = parseGitHubUrl(repoUrl);
-            if (!parsedRepo) throw new Error("Invalid GitHub URL provided.");
-            const { owner, repo } = parsedRepo;
-
-            let fileContentsString = '';
-            sendEvent(res, { type: 'system', message: 'Fetching repository files from GitHub...' });
-            
-            for (const path of paths) {
-                let content = '';
-                try {
-                    content = await fetchFileContent(owner, repo, path, githubToken);
-                    sendEvent(res, { type: 'processing_file', path: path, content: content });
-                } catch (fetchError) {
-                    console.warn(`Could not fetch ${path}:`, fetchError.message);
-                    content = `// Error fetching content: ${fetchError.message}`;
-                    sendEvent(res, { type: 'processing_file', path: path, content: content });
-                }
-                fileContentsString += `// FILE: ${path}\n${content}\n\n---\n\n`;
-                await new Promise(resolve => setTimeout(resolve, 10)); 
-            }
-            
-            sendEvent(res, { type: 'system', message: 'All files processed. Starting analysis tasks.' });
-            
-            const tasks = [
-                { id: 'summary', title: '1. Project Summary', prompt: `Provide a concise, one-paragraph summary of this project's purpose based on its file structure and code. Codebase:\n${fileContentsString}` },
-                { id: 'tech_stack', title: '2. Tech Stack Analysis', prompt: `Analyze the tech stack. Identify the primary languages, frameworks, and key libraries. Present as a markdown list. Codebase:\n${fileContentsString}` },
-                { id: 'architecture', title: '3. Architectural Review', prompt: `Critique the overall architecture. Discuss strengths, weaknesses, and potential improvements in markdown format. Codebase:\n${fileContentsString}` },
-                { id: 'error_trends', title: '4. Common Error Trends', prompt: `Identify up to 3 recurring problems or anti-patterns. For each, describe the trend and list affected files. Codebase:\n${fileContentsString}` },
-                { id: 'suggestions', title: '5. Actionable Suggestions', prompt: `List up to 5 specific, actionable improvements for this codebase. Codebase:\n${fileContentsString}` },
-            ];
-            
-            for (const task of tasks) {
-                await performStreamingTask(res, task.id, task.title, task.prompt);
-            }
-
-        } catch (error) {
-            console.error("Analysis process terminated due to an error:", error);
-            const errorMessage = error instanceof Error ? error.message : 'An unknown server error occurred';
-            sendEvent(res, { type: 'error', message: `A fatal error occurred: ${errorMessage}` });
-        } finally {
-            if (!res.writableEnded) res.end();
-        }
+    req.on('end', () => {
+        // Yield to the event loop with setTimeout to ensure the initial connection message is sent
+        // before we start the potentially long-running analysis process. This fixes the stall.
+        setTimeout(() => runAnalysis(res, body), 100);
     });
 
     req.on('error', (err) => {

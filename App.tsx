@@ -2,6 +2,8 @@
 
 
 
+
+
 import React, { useReducer, useCallback, useEffect } from 'react';
 import type { RepoTreeNode, RepoFileWithContent, RepoTreeFolder, AnalysisTask } from './types';
 import { fetchRepoRoot, fetchFolderContents, fetchAllFilePaths, parseGitHubUrl } from './services/githubService';
@@ -319,6 +321,7 @@ export default function App(): React.ReactElement {
       dispatch({ type: 'REPO_ANALYSIS_COMPLETE' });
 
     } catch (err) {
+      // FIX: The 'err' object in a catch block is of type 'unknown'. Added a type guard to safely access the error message.
       const message = err instanceof Error ? err.message : 'An unknown error occurred.';
       dispatch({ type: 'ADD_LOG', payload: `[ERROR] ${message}` });
       dispatch({ type: 'REPO_ANALYSIS_FAILURE', payload: message });
