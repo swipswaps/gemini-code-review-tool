@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import 'dotenv/config';
@@ -136,24 +137,46 @@ const runAnalysis = async (res, body) => {
         if (!parsedRepo) throw new Error("Invalid GitHub URL provided.");
         const { owner, repo } = parsedRepo;
 
+        const MAX_CONTEXT_CHAR_LIMIT = 750000; // A safe character limit for the prompt context
         let fileContentsString = '';
+        let totalChars = 0;
+        let filesIncludedCount = 0;
+
         sendEvent(res, { type: 'system', message: 'Fetching repository files from GitHub...' });
         
         for (const path of paths) {
             let content = '';
             try {
                 content = await fetchFileContent(owner, repo, path, githubToken);
+
+                // Ensure at least one file is included, but stop if adding the next one exceeds the limit.
+                if (filesIncludedCount > 0 && totalChars + content.length > MAX_CONTEXT_CHAR_LIMIT) {
+                    sendEvent(res, { type: 'system', message: `[SYSTEM] Context limit of ${MAX_CONTEXT_CHAR_LIMIT} characters reached. Analyzing the first ${filesIncludedCount} files.` });
+                    break; // Stop the loop, don't process this file or any after it.
+                }
+
                 sendEvent(res, { type: 'processing_file', path: path, content: content });
+                fileContentsString += `// FILE: ${path}\n${content}\n\n---\n\n`;
+                totalChars += content.length;
+                filesIncludedCount++;
+
             } catch (fetchError) {
                 console.warn(`Could not fetch ${path}:`, fetchError.message);
-                content = `// Error fetching content: ${fetchError.message}`;
-                sendEvent(res, { type: 'processing_file', path: path, content: content });
+                const errorMessage = `// Error fetching content: ${fetchError.message}`;
+                // Send an event so UI can show the error for this file, but don't add to Gemini context.
+                sendEvent(res, { type: 'processing_file', path: path, content: errorMessage });
             }
-            fileContentsString += `// FILE: ${path}\n${content}\n\n---\n\n`;
-            await new Promise(resolve => setTimeout(resolve, 10)); 
+            // Small delay to prevent overwhelming GitHub API and to allow UI to update
+            await new Promise(resolve => setTimeout(resolve, 50)); 
         }
         
-        sendEvent(res, { type: 'system', message: 'All files processed. Starting analysis tasks.' });
+        if (totalChars === 0 && paths.length > 0) {
+            sendEvent(res, { type: 'system', message: '[SYSTEM] Could not fetch content for any files. Aborting analysis.' });
+            // End the execution here as there's nothing to analyze.
+            return;
+        }
+        
+        sendEvent(res, { type: 'system', message: `Context built with ${filesIncludedCount} files. Starting analysis tasks.` });
         
         const tasks = [
             { id: 'summary', title: '1. Project Summary', prompt: `Provide a concise, one-paragraph summary of this project's purpose based on its file structure and code. Codebase:\n${fileContentsString}` },
