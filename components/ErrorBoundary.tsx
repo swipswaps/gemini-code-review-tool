@@ -1,4 +1,5 @@
 
+
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangleIcon } from './icons/AlertTriangleIcon';
 
@@ -33,11 +34,8 @@ export class ErrorBoundary extends Component<Props, State> {
   handleReset = () => {
     if (this.props.onReset) {
       this.props.onReset();
-      this.setState({ hasError: false, error: null });
-    } else {
-      // If no custom reset logic is provided, reload the page as a last resort.
-      window.location.reload();
     }
+    this.setState({ hasError: false, error: null });
   };
 
   render() {

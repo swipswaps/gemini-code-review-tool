@@ -1,3 +1,4 @@
+
 export interface RepoTreeFile {
   type: 'file';
   path: string;
@@ -71,6 +72,7 @@ export interface ReviewState {
 
 // Type for streaming analysis updates from the server, now task-based
 export type RepoAnalysisStreamEvent = 
+    | { type: 'processing_file', path: string }
     | { type: 'task_start', id: string, title: string }
     | { type: 'task_chunk', id: string, chunk: string }
     | { type: 'task_end', id: string, error?: string }

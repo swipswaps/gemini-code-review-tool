@@ -1,4 +1,5 @@
 
+
 import React, { useReducer, useCallback, useEffect } from 'react';
 // FIX: Removed unused HolisticAnalysisResult type
 import type { RepoTreeNode, RepoFileWithContent, RepoTreeFolder, RepoAnalysisStreamEvent, AnalysisTask } from './types';
@@ -22,6 +23,7 @@ type AppState = {
   filesForReview: RepoFileWithContent[] | null;
   analysisTasks: AnalysisTask[];
   allFilesWithContent: RepoFileWithContent[] | null;
+  currentlyProcessingFile: string | null;
   logs: string[];
   error: string | null;
 };
@@ -41,6 +43,7 @@ type AppAction =
   | { type: 'FILE_REVIEW_FAILURE'; payload: string }
   | { type: 'START_REPO_ANALYSIS' }
   | { type: 'FETCH_ANALYSIS_FILES_SUCCESS'; payload: RepoFileWithContent[] }
+  | { type: 'REPO_ANALYSIS_PROCESSING_FILE'; payload: string }
   | { type: 'REPO_ANALYSIS_TASK_START', payload: { id: string, title: string } }
   | { type: 'REPO_ANALYSIS_TASK_CHUNK', payload: { id: string, chunk: string } }
   | { type: 'REPO_ANALYSIS_TASK_END', payload: { id: string, error?: string } }
@@ -59,6 +62,7 @@ const initialState: AppState = {
   filesForReview: null,
   analysisTasks: [],
   allFilesWithContent: null,
+  currentlyProcessingFile: null,
   logs: [],
   error: null,
 };
@@ -124,9 +128,11 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     case 'FILE_REVIEW_FAILURE':
       return { ...state, status: 'error', error: action.payload };
     case 'START_REPO_ANALYSIS':
-      return { ...state, status: 'analyzing_repo', analysisTasks: [], allFilesWithContent: null, error: null, logs: ['[SYSTEM] Starting repository analysis...'] };
+      return { ...state, status: 'analyzing_repo', analysisTasks: [], allFilesWithContent: null, error: null, logs: ['[SYSTEM] Starting repository analysis...'], currentlyProcessingFile: null };
     case 'FETCH_ANALYSIS_FILES_SUCCESS':
         return { ...state, allFilesWithContent: action.payload };
+    case 'REPO_ANALYSIS_PROCESSING_FILE':
+        return { ...state, currentlyProcessingFile: action.payload };
     case 'REPO_ANALYSIS_TASK_START':
         return { ...state, analysisTasks: [...state.analysisTasks, { id: action.payload.id, title: action.payload.title, status: 'in_progress', content: '', error: null }]};
     case 'REPO_ANALYSIS_TASK_CHUNK': {
@@ -152,7 +158,7 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
         return { ...state, analysisTasks: newTasks };
     }
     case 'REPO_ANALYSIS_COMPLETE':
-      return { ...state, status: 'repo_loaded' };
+      return { ...state, status: 'repo_loaded', currentlyProcessingFile: null };
     case 'REPO_ANALYSIS_FAILURE':
       return { ...state, status: 'repo_loaded', error: action.payload, analysisTasks: state.analysisTasks }; // Keep partial results on failure
     case 'ADD_LOG':
@@ -170,7 +176,7 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
 
 export default function App(): React.ReactElement {
   const [state, dispatch] = useReducer(appReducer, initialState);
-  const { status, repoUrl, githubToken, repoTree, selectedFilePaths, filesForReview, analysisTasks, allFilesWithContent, logs, error } = state;
+  const { status, repoUrl, githubToken, repoTree, selectedFilePaths, filesForReview, analysisTasks, allFilesWithContent, currentlyProcessingFile, logs, error } = state;
 
   const handleFetchFiles = useCallback(async (urlToFetch: string) => {
     if (!parseGitHubUrl(urlToFetch)) {
@@ -232,7 +238,11 @@ export default function App(): React.ReactElement {
       const filesToReview = results.map((result, index) => {
         const path = paths[index];
         if (result.status === 'fulfilled') return { path, content: result.value };
-        return { path, content: '', error: result.reason instanceof Error ? result.reason.message : 'An unknown error occurred.' };
+        // FIX: The `reason` for a rejected promise from Promise.allSettled is of type `unknown`.
+        // We must safely handle this by checking if it's an Error instance before accessing `.message`,
+        // and providing a fallback string for other cases to satisfy the `string` type of the `error` property.
+        const errorMessage = result.reason instanceof Error ? result.reason.message : 'An unknown error occurred.';
+        return { path, content: '', error: errorMessage };
       });
       dispatch({ type: 'FILE_REVIEW_SUCCESS', payload: filesToReview });
     } catch (err) {
@@ -266,6 +276,9 @@ export default function App(): React.ReactElement {
       const stream = analyzeRepositoryStream(fetchedContents);
       for await (const event of stream) {
         switch(event.type) {
+            case 'processing_file':
+                dispatch({ type: 'REPO_ANALYSIS_PROCESSING_FILE', payload: event.path });
+                break;
             case 'task_start':
                 dispatch({ type: 'REPO_ANALYSIS_TASK_START', payload: event });
                 break;
@@ -307,6 +320,7 @@ export default function App(): React.ReactElement {
               repoUrl={repoUrl}
               analysisTasks={analysisTasks}
               originalFiles={allFilesWithContent}
+              currentlyProcessingFile={currentlyProcessingFile}
               isLoading={status === 'analyzing_repo'}
               logs={logs}
               onReset={() => dispatch({ type: 'RESET' })}

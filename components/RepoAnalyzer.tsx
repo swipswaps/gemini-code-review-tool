@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { marked } from 'marked';
 import type { AnalysisTask, RepoFileWithContent } from '../types';
@@ -13,12 +14,13 @@ interface RepoAnalyzerProps {
   repoUrl: string;
   analysisTasks: AnalysisTask[];
   originalFiles: RepoFileWithContent[] | null;
+  currentlyProcessingFile: string | null;
   isLoading: boolean;
   logs: string[];
   onReset: () => void;
 }
 
-export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTasks, originalFiles, isLoading, logs, onReset }) => {
+export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTasks, originalFiles, currentlyProcessingFile, isLoading, logs, onReset }) => {
   
   const handleExport = () => {
     if (analysisTasks.length === 0 || !repoUrl) return;
@@ -51,18 +53,33 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTas
   };
 
   const hasStartedAnalysis = analysisTasks.length > 0;
+  const fileBeingProcessed = currentlyProcessingFile ? originalFiles?.find(f => f.path === currentlyProcessingFile) : null;
+  const isProcessingContext = isLoading && currentlyProcessingFile && !hasStartedAnalysis;
 
-  // Initial loading view: shown only during file fetching.
+  // Combined initial loading view: handles both file fetching and context building.
   if (isLoading && !hasStartedAnalysis) {
     return (
       <div className="flex flex-col h-full bg-gray-800/50 rounded-lg border border-gray-700 p-4 space-y-4">
         <div className="flex items-center flex-shrink-0">
             <Spinner className="h-10 w-10 mr-4" />
             <div>
-                <h2 className="text-xl font-semibold text-gray-200">Preparing Analysis...</h2>
-                <p className="text-sm text-purple-400">Fetching all repository files...</p>
+                <h2 className="text-xl font-semibold text-gray-200">
+                    {isProcessingContext ? 'Building Analysis Context...' : 'Preparing Analysis...'}
+                </h2>
+                <p className="text-sm text-purple-400 font-mono truncate max-w-md">
+                    {isProcessingContext ? currentlyProcessingFile : 'Fetching all repository files...'}
+                </p>
             </div>
         </div>
+
+        {isProcessingContext && fileBeingProcessed && (
+            <div className="bg-gray-900 p-3 rounded-md border border-gray-700 font-mono text-xs animate-pulse-once flex-shrink-0">
+                <pre className="text-gray-400 overflow-hidden text-ellipsis whitespace-pre-wrap h-24">
+                    {fileBeingProcessed.content.split('\n').slice(0, 10).join('\n') || '(Empty File)'}
+                </pre>
+            </div>
+        )}
+
         <div className="w-full flex-grow min-h-0">
             <LogViewer logs={logs} />
         </div>

@@ -1,3 +1,4 @@
+
 import express from 'express';
 import cors from 'cors';
 import 'dotenv/config';
@@ -126,7 +127,14 @@ app.post('/api/analyze', async (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     
     try {
-        let fileContentsString = files.map(file => `// FILE: ${file.path}\n${file.content}\n\n---\n\n`).join('');
+        // Make the "context building" step visible to the client
+        for (const file of files) {
+            sendEvent(res, { type: 'processing_file', path: file.path });
+            // Add a small delay to ensure the event is rendered on the frontend
+            await new Promise(resolve => setTimeout(resolve, 20)); 
+        }
+
+        const fileContentsString = files.map(file => `// FILE: ${file.path}\n${file.content}\n\n---\n\n`).join('');
         
         // Define the sequence of analysis tasks
         const tasks = [
