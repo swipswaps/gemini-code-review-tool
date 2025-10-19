@@ -8,8 +8,6 @@ const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
-// We will handle JSON parsing manually for the streaming analysis endpoint
-app.use(express.json({ limit: '50mb' }));
 
 // Check for API Key
 const API_KEY = process.env.API_KEY;
@@ -61,8 +59,8 @@ const sendEvent = (res, event) => {
 
 // --- API Endpoints ---
 
-// This endpoint remains the same as it handles smaller, non-streaming requests.
-app.post('/api/review', async (req, res) => {
+// Apply express.json() middleware ONLY to the routes that need it.
+app.post('/api/review', express.json(), async (req, res) => {
   const { code, fileName } = req.body;
   if (!code || !fileName) return res.status(400).send('Missing code or fileName.');
   try {
@@ -90,8 +88,7 @@ app.post('/api/review', async (req, res) => {
   }
 });
 
-// This endpoint remains the same as it handles smaller, non-streaming requests.
-app.post('/api/lint', async (req, res) => {
+app.post('/api/lint', express.json(), async (req, res) => {
     const { code, fileName } = req.body;
     if (!code || !fileName) return res.status(400).send('Missing code or fileName.');
     try {
@@ -130,7 +127,6 @@ const performStreamingTask = async (res, taskId, taskTitle, prompt) => {
 const analyzeRepoRequestHandler = async (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     
-    // CRITICAL FIX: Send connection message IMMEDIATELY, before processing the request body.
     sendEvent(res, { type: 'system', message: 'Backend connection established. Receiving file list...' });
 
     let body = '';
@@ -197,8 +193,8 @@ const analyzeRepoRequestHandler = async (req, res) => {
     });
 };
 
-// CRITICAL FIX: We remove the blocking express.json() middleware from this specific route
-// and use our custom handler that establishes a stream immediately.
+// This route does NOT have the blocking express.json() middleware.
+// It uses the custom handler that establishes a stream immediately.
 app.post('/api/analyze', analyzeRepoRequestHandler);
 
 

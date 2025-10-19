@@ -17,12 +17,6 @@ export class ErrorBoundary extends Component<Props, State> {
     error: null,
   };
 
-  constructor(props: Props) {
-    super(props);
-    // FIX: Bind 'this' in the constructor to ensure it's correctly bound in the handleReset method.
-    this.handleReset = this.handleReset.bind(this);
-  }
-
   static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
   }
@@ -31,7 +25,8 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error("Uncaught error:", error, errorInfo);
   }
   
-  handleReset() {
+  // FIX: Converted to an arrow function to ensure `this` is correctly bound when used as an event handler.
+  handleReset = () => {
     if (this.props.onReset) {
       this.props.onReset();
     }
