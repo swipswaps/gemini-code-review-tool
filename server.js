@@ -104,13 +104,20 @@ app.post('/api/analyze', async (req, res) => {
     try {
         const fileContentsString = files.map(f => `// FILE: ${f.path}\n${f.content}`).join('\n\n---\n\n');
         
-        // Step 1: Overall Analysis
+        // Step 1: Overall Analysis (Streaming)
         sendEvent(res, { type: 'status', message: 'Analyzing overall architecture...' });
-        const overallAnalysisResponse = await ai.models.generateContent({
+        const overallAnalysisStream = await ai.models.generateContentStream({
             model: "gemini-2.5-pro",
             contents: `Analyze the overall architecture of this codebase. What are its strengths and weaknesses? Provide a concise, high-level summary in markdown. Codebase:\n${fileContentsString}`,
         });
-        sendEvent(res, { type: 'data', payload: { overallAnalysis: overallAnalysisResponse.text }});
+        
+        let accumulatedAnalysis = '';
+        for await (const chunk of overallAnalysisStream) {
+            if (chunk.text) {
+                accumulatedAnalysis += chunk.text;
+                sendEvent(res, { type: 'data', payload: { overallAnalysis: accumulatedAnalysis }});
+            }
+        }
 
         // Step 2: Dependency Review
         const packageJsonFile = files.find(f => f.path.endsWith('package.json'));

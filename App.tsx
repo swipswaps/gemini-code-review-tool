@@ -1,5 +1,7 @@
 
 
+
+
 import React, { useReducer, useCallback, useEffect } from 'react';
 import type { RepoTreeNode, HolisticAnalysisResult, RepoFileWithContent, RepoTreeFolder, RepoAnalysisStreamEvent } from './types';
 import { fetchRepoRoot, fetchFolderContents, fetchAllFileContents, fetchFileContent, parseGitHubUrl } from './services/githubService';
@@ -214,7 +216,9 @@ export default function App(): React.ReactElement {
       });
       dispatch({ type: 'FILE_REVIEW_SUCCESS', payload: filesToReview });
     } catch (err) {
-      // Fix: Ensure the error object is handled correctly and a string message is dispatched.
+      // FIX: The 'err' object in a catch block is of type 'unknown'.
+      // We must check if it's an instance of Error before accessing its 'message' property
+      // to ensure a string is passed to the dispatch payload.
       const message = err instanceof Error ? err.message : 'An unknown error occurred while fetching files.';
       dispatch({ type: 'FILE_REVIEW_FAILURE', payload: message });
     }

@@ -1,6 +1,7 @@
 
 
 
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReviewState, RepoFileWithContent } from '../types';
 import { reviewCodeStream, lintCode } from '../services/geminiService';
@@ -40,7 +41,8 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
         setReviewStates(prev => {
             const newStates = new Map(prev);
             const currentState = newStates.get(file.path);
-            // FIX: Guard against undefined currentState before spreading.
+            // FIX: The result of `newStates.get(file.path)` can be `undefined`.
+            // Added a guard to ensure `currentState` exists before spreading it to prevent a runtime error.
             if (!currentState) return newStates;
             newStates.set(file.path, { ...currentState, status: 'streaming', streamedComments: fullResponse });
             return newStates;
@@ -68,7 +70,8 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
       setReviewStates(prev => {
           const newStates = new Map(prev);
           const currentState = newStates.get(file.path);
-          // FIX: Guard against undefined currentState before spreading.
+          // FIX: The result of `newStates.get(file.path)` can be `undefined`.
+          // Added a guard to ensure `currentState` exists before spreading it to prevent a runtime error.
           if (!currentState) return newStates;
           newStates.set(file.path, { ...currentState, status: 'error', error: errorMessage });
           return newStates;
@@ -80,7 +83,8 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
         setReviewStates(prev => {
             const newStates = new Map(prev);
             const currentState = newStates.get(file.path);
-            // FIX: Guard against undefined currentState before spreading.
+            // FIX: The result of `newStates.get(file.path)` can be `undefined`.
+            // Added a guard to ensure `currentState` exists before spreading it to prevent a runtime error.
             if (!currentState) return newStates;
             newStates.set(file.path, { ...currentState, lintingStatus: 'linting' });
             return newStates;
@@ -92,7 +96,8 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
             setReviewStates(prev => {
                 const newStates = new Map(prev);
                 const currentState = newStates.get(file.path);
-                // FIX: Guard against undefined currentState and null result before spreading.
+                // FIX: `currentState` or `currentState.result` could be undefined/null.
+                // Added a guard to ensure both exist before attempting to spread them.
                 if (!currentState || !currentState.result) return newStates;
                 const newResult = { ...currentState.result, correctedCode: lintedCode };
                 newStates.set(file.path, {
@@ -108,7 +113,8 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
             setReviewStates(prev => {
                 const newStates = new Map(prev);
                 const currentState = newStates.get(file.path);
-                // FIX: Guard against undefined currentState before spreading.
+                // FIX: The result of `newStates.get(file.path)` can be `undefined`.
+                // Added a guard to ensure `currentState` exists before spreading it to prevent a runtime error.
                 if (!currentState) return newStates;
                 newStates.set(file.path, { ...currentState, lintingStatus: 'error' });
                 return newStates;
