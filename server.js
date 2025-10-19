@@ -124,7 +124,7 @@ const performStreamingTask = async (res, taskId, taskTitle, prompt) => {
     }
 };
 
-const analyzeRepoRequestHandler = async (req, res) => {
+const analyzeRepoRequestHandler = (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     
     sendEvent(res, { type: 'system', message: 'Backend connection established. Receiving file list...' });
