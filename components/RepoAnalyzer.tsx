@@ -11,14 +11,14 @@ import { InfoIcon } from './icons/InfoIcon';
 interface RepoAnalyzerProps {
   repoUrl: string;
   analysisTasks: AnalysisTask[];
-  originalFiles: RepoFileWithContent[] | null;
+  filesWithContent: Map<string, string>; // Changed from array to map
   currentlyProcessingFile: string | null;
   isLoading: boolean;
   logs: string[];
   onReset: () => void;
 }
 
-export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTasks, originalFiles, currentlyProcessingFile, isLoading, logs, onReset }) => {
+export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTasks, filesWithContent, currentlyProcessingFile, isLoading, logs, onReset }) => {
   
   const handleExport = () => {
     if (analysisTasks.length === 0 || !repoUrl) return;
@@ -51,8 +51,8 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTas
   };
 
   const hasStartedTasks = analysisTasks.length > 0;
-  const fileBeingProcessed = currentlyProcessingFile ? originalFiles?.find(f => f.path === currentlyProcessingFile) : null;
-  const isProcessingContext = !hasStartedTasks && currentlyProcessingFile;
+  const fileContent = currentlyProcessingFile ? filesWithContent.get(currentlyProcessingFile) : null;
+  const isProcessingContext = isLoading && !hasStartedTasks;
 
   let headerText = "Analysis in Progress...";
   let subHeaderText = "Initializing...";
@@ -67,7 +67,7 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTas
           subHeaderText = currentTask ? currentTask.title : "Running analysis tasks...";
       } else {
           headerText = "Preparing Analysis...";
-          subHeaderText = "Fetching all repository files...";
+          subHeaderText = "Discovering all repository files...";
       }
   } else if (hasStartedTasks) {
       headerText = "Repository Architectural Analysis";
@@ -88,8 +88,6 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTas
     );
   }
 
-  // This is the new, unified view for both "in-progress" and "completed" analysis states.
-  // It ensures the logs and task list are always visible once the process starts.
   return (
     <div className="flex flex-col h-full space-y-4">
       {/* 1. Unified Header */}
@@ -123,23 +121,16 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTas
 
       {/* 2. Main Content Area (Tasks and Snippets) */}
       <div className="flex-grow min-h-0 overflow-y-auto pr-2 space-y-4 custom-scrollbar">
-          {isProcessingContext && fileBeingProcessed && (
+          {isProcessingContext && currentlyProcessingFile && (
               <div className="bg-gray-900 p-3 rounded-md border border-gray-700 font-mono text-xs animate-pulse-once">
-                  <h4 className="text-gray-500 mb-2">Processing: {fileBeingProcessed.path}</h4>
+                  <h4 className="text-gray-500 mb-2">Processing: {currentlyProcessingFile}</h4>
                   <pre className="text-gray-400 overflow-hidden text-ellipsis whitespace-pre-wrap h-24">
-                      {fileBeingProcessed.content.split('\n').slice(0, 10).join('\n') || '(Empty File)'}
+                      {fileContent?.split('\n').slice(0, 10).join('\n') || '(Empty or binary file)'}
                   </pre>
               </div>
           )}
           
-          {hasStartedTasks ? (
-            analysisTasks.map(task => <AnalysisTaskItem key={task.id} task={task} />)
-          ) : (
-            <div className="text-center text-gray-500 p-8">
-              <Spinner className="w-8 h-8 mx-auto mb-4" />
-              Waiting for analysis tasks...
-            </div>
-          )}
+          {hasStartedTasks && analysisTasks.map(task => <AnalysisTaskItem key={task.id} task={task} />)}
       </div>
       
       {/* 3. Persistent Log Viewer */}

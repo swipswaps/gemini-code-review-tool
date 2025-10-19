@@ -1,5 +1,3 @@
-import { CODE_SEPARATOR } from '../utils/constants';
-// FIX: Removed unused HolisticAnalysisResult type
 import type { RepoAnalysisStreamEvent } from '../types';
 
 async function* streamFetch(response: Response): AsyncGenerator<string> {
@@ -57,12 +55,14 @@ export async function lintCode(code: string, fileName: string): Promise<string> 
 }
 
 export async function* analyzeRepositoryStream(
-  files: { path: string; content: string }[]
+  repoUrl: string,
+  paths: string[],
+  githubToken?: string
 ): AsyncGenerator<RepoAnalysisStreamEvent> {
     const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files }),
+        body: JSON.stringify({ repoUrl, paths, githubToken }),
     });
 
      if (!response.ok) {

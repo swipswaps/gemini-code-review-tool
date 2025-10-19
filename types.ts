@@ -73,7 +73,7 @@ export interface ReviewState {
 // Type for streaming analysis updates from the server, now task-based
 export type RepoAnalysisStreamEvent = 
     | { type: 'system', message: string }
-    | { type: 'processing_file', path: string }
+    | { type: 'processing_file', path: string, content: string }
     | { type: 'task_start', id: string, title: string }
     | { type: 'task_chunk', id: string, chunk: string }
     | { type: 'task_end', id: string, error?: string }

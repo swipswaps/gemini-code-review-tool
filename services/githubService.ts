@@ -93,106 +93,50 @@ export const fetchFolderContents = async (owner: string, repo: string, path: str
     return sortNodes(nodes);
 };
 
-
-// Fetches the content of a single file
-export const fetchFileContent = async (owner: string, repo: string, path: string, token?: string): Promise<string> => {
-    const headers: HeadersInit = {};
-    if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-    }
-    
-    const contentResponse = await fetchWithTimeout(`${API_BASE}/repos/${owner}/${repo}/contents/${path}`, { headers });
-    
-    if (!contentResponse.ok) {
-        if (contentResponse.status === 403) throw new Error('GitHub API rate limit exceeded. Please provide a Personal Access Token.');
-        throw new Error(`Failed to fetch file content for ${path} (status: ${contentResponse.status})`);
-    }
-
-    const contentData = await contentResponse.json();
-
-    if (Array.isArray(contentData)) {
-      throw new Error(`The path "${path}" is a directory, not a file.`);
-    }
-
-    // Reliably handle empty files by checking the size property.
-    if (contentData.size === 0) {
-        return '';
-    }
-
-    if (contentData.encoding !== 'base64' || typeof contentData.content !== 'string') {
-        if (contentData.download_url) {
-            // This indicates a file too large for the contents API. Treat as an error for this app.
-            throw new Error(`File is too large to fetch via this method: ${path}`);
-        }
-        throw new Error(`Unsupported file encoding or missing content for file: ${path}`);
-    }
-
-    try {
-        return atob(contentData.content);
-    } catch (e) {
-        console.error("Base64 decoding error:", e);
-        throw new Error(`Failed to decode file content for ${path}.`);
-    }
-};
-
-// Fetches the content for all files in the repository tree by recursively fetching folder contents
-export const fetchAllFileContents = async (
+// Traverses the entire repository structure to get a flat list of all file paths.
+// This is much faster than fetching content for every file.
+export const fetchAllFilePaths = async (
   owner: string,
   repo: string,
+  token: string | undefined,
   initialTree: RepoTreeNode[],
-  token?: string,
   onProgress?: (message: string) => void
-): Promise<{ path: string; content: string }[]> => {
-  
-  const allFiles: { path: string; content: string }[] = [];
-  const foldersToFetch: RepoTreeNode[] = [...initialTree];
-  let fetchedPaths = new Set<string>();
+): Promise<string[]> => {
+    const allPaths: string[] = [];
+    // Start with a copy of the initial tree to avoid modifying the original state directly.
+    const foldersToScan: RepoTreeNode[] = [...initialTree]; 
+    const scannedPaths = new Set<string>();
 
-  while(foldersToFetch.length > 0) {
-      // Unconditionally yield to the event loop on each iteration. This prevents the UI from
-      // freezing when processing a large number of files synchronously (e.g., skipping empty files).
-      await new Promise(resolve => setTimeout(resolve, 0));
+    while (foldersToScan.length > 0) {
+        // Yield to the event loop on each iteration to prevent freezing the UI on very large repos.
+        await new Promise(resolve => setTimeout(resolve, 0)); 
+        const node = foldersToScan.pop()!;
+        
+        if (scannedPaths.has(node.path)) continue;
+        scannedPaths.add(node.path);
 
-      const node = foldersToFetch.pop()!;
-      if (fetchedPaths.has(node.path)) continue;
-      fetchedPaths.add(node.path);
-
-      if (node.type === 'file') {
-          // The node from the tree now includes size, so we can skip fetching empty files.
-          if ((node as RepoTreeFile).size === 0) {
-              onProgress?.(`Skipping empty file: ${node.path}`);
-              allFiles.push({ path: node.path, content: '' });
-          } else {
-              onProgress?.(`Fetching file ${allFiles.length + 1}/100: ${node.path}`);
-              try {
-                  const content = await fetchFileContent(owner, repo, node.path, token);
-                  allFiles.push({ path: node.path, content });
-              } catch(e) {
-                  const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-                  onProgress?.(`ERROR fetching ${node.path}: ${errorMessage}`);
-                  console.error(`Skipping file ${node.path} due to fetch error:`, e);
-                  allFiles.push({ path: node.path, content: `// Error fetching content: ${errorMessage}` });
-              }
-          }
-      } else if (node.type === 'folder') {
-          onProgress?.(`Scanning directory: ${node.path || '/'}`);
-          try {
-            const children = await fetchFolderContents(owner, repo, node.path, token);
-            // Push children in reverse order to process them in a more natural (e.g., alphabetical) order
-            foldersToFetch.push(...[...children].reverse());
-          } catch(e) {
-             const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-             onProgress?.(`ERROR scanning directory ${node.path || '/'}: ${errorMessage}`);
-             console.error(`Skipping folder ${node.path} due to fetch error:`, e);
-          }
-      }
-
-      if (allFiles.length >= 100) {
-          onProgress?.(`Reached 100 files. Starting analysis...`);
-          console.warn(`Reached 100 files. Limiting analysis to the first 100 files fetched to avoid performance issues.`);
-          break;
-      }
-  }
-  
-  return allFiles;
+        if (node.type === 'file') {
+            allPaths.push(node.path);
+        } else if (node.type === 'folder') {
+            onProgress?.(`Scanning directory: ${node.path || '/'}`);
+            try {
+                // Fetch the contents of the directory.
+                const children = await fetchFolderContents(owner, repo, node.path, token);
+                // Add children to the scan queue in reverse to maintain a somewhat-depth-first order with pop().
+                foldersToScan.push(...[...children].reverse());
+            } catch (e) {
+                const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+                onProgress?.(`ERROR scanning directory ${node.path || '/'}: ${errorMessage}`);
+                console.error(`Skipping folder ${node.path} due to fetch error:`, e);
+            }
+        }
+        
+        // Safety break to avoid excessive API calls during development/testing.
+        if (allPaths.length >= 100) {
+            onProgress?.(`Reached 100 files. Limiting analysis to the first 100 files found.`);
+            console.warn(`Reached 100 files limit.`);
+            return allPaths.slice(0, 100);
+        }
+    }
+    return allPaths;
 };

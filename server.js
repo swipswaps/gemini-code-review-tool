@@ -2,14 +2,14 @@
 import express from 'express';
 import cors from 'cors';
 import 'dotenv/config';
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI } from '@google/genai';
 
 const app = express();
 const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '50mb' })); // Increase limit for large repos
+app.use(express.json({ limit: '50mb' }));
 
 // Check for API Key
 const API_KEY = process.env.API_KEY;
@@ -21,6 +21,39 @@ if (!API_KEY) {
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: API_KEY });
 
+// --- Server-side GitHub Helpers ---
+const API_BASE = 'https://api.github.com';
+
+const parseGitHubUrl = (url) => {
+  try {
+    const urlObj = new URL(url);
+    if (urlObj.hostname !== 'github.com') return null;
+    const parts = urlObj.pathname.split('/').filter(Boolean);
+    if (parts.length < 2) return null;
+    return { owner: parts[0], repo: parts[1].replace('.git', '') };
+  } catch (error) { return null; }
+};
+
+const fetchWithTimeout = async (resource, options = {}, timeout = 15000) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    const response = await fetch(resource, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return response;
+};
+
+const fetchFileContent = async (owner, repo, path, token) => {
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetchWithTimeout(`${API_BASE}/repos/${owner}/${repo}/contents/${path}`, { headers });
+    if (!res.ok) throw new Error(`Failed to fetch ${path} from GitHub (status: ${res.status})`);
+    const data = await res.json();
+    if (data.size === 0) return '';
+    if (data.encoding !== 'base64' || typeof data.content !== 'string') throw new Error(`Unsupported encoding for ${path}`);
+    return Buffer.from(data.content, 'base64').toString('utf-8');
+};
+
+
 // --- Helper Functions ---
 const sendEvent = (res, event) => {
     res.write(`EVENT: ${JSON.stringify(event)}\n`);
@@ -28,13 +61,9 @@ const sendEvent = (res, event) => {
 
 // --- API Endpoints ---
 
-// Endpoint for streaming code review
 app.post('/api/review', async (req, res) => {
   const { code, fileName } = req.body;
-  if (!code || !fileName) {
-    return res.status(400).send('Missing code or fileName in request body.');
-  }
-
+  if (!code || !fileName) return res.status(400).send('Missing code or fileName.');
   try {
     const prompt = `
       You are an expert senior software engineer and code reviewer.
@@ -48,17 +77,10 @@ app.post('/api/review', async (req, res) => {
       ${code}
       \`\`\`
     `;
-
-    const responseStream = await ai.models.generateContentStream({
-      model: "gemini-2.5-pro",
-      contents: prompt,
-    });
-    
+    const responseStream = await ai.models.generateContentStream({ model: "gemini-2.5-pro", contents: prompt });
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     for await (const chunk of responseStream) {
-      if (chunk.text) {
-        res.write(chunk.text);
-      }
+      if (chunk.text) res.write(chunk.text);
     }
     res.end();
   } catch (error) {
@@ -67,12 +89,9 @@ app.post('/api/review', async (req, res) => {
   }
 });
 
-// Endpoint for linting
 app.post('/api/lint', async (req, res) => {
     const { code, fileName } = req.body;
-    if (!code || !fileName) {
-        return res.status(400).send('Missing code or fileName in request body.');
-    }
+    if (!code || !fileName) return res.status(400).send('Missing code or fileName.');
     try {
         const prompt = `
             You are an expert code linter and formatter. Your task is to take the following code from "${fileName}" and automatically fix all formatting and style issues.
@@ -82,10 +101,7 @@ app.post('/api/lint', async (req, res) => {
             ${code}
             \`\`\`
         `;
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-        });
+        const response = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: prompt });
         res.json({ text: response.text });
     } catch (error) {
         console.error("Error in /api/lint:", error);
@@ -93,56 +109,57 @@ app.post('/api/lint', async (req, res) => {
     }
 });
 
-
-// Helper to perform a streaming analysis task
 const performStreamingTask = async (res, taskId, taskTitle, prompt) => {
     sendEvent(res, { type: 'task_start', id: taskId, title: taskTitle });
     try {
-        const responseStream = await ai.models.generateContentStream({
-            model: "gemini-2.5-pro",
-            contents: prompt,
-        });
-
+        const responseStream = await ai.models.generateContentStream({ model: "gemini-2.5-pro", contents: prompt });
         for await (const chunk of responseStream) {
-            if (chunk.text) {
-                sendEvent(res, { type: 'task_chunk', id: taskId, chunk: chunk.text });
-            }
+            if (chunk.text) sendEvent(res, { type: 'task_chunk', id: taskId, chunk: chunk.text });
         }
         sendEvent(res, { type: 'task_end', id: taskId });
     } catch (error) {
         console.error(`Error during task "${taskTitle}":`, error);
         const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
         sendEvent(res, { type: 'task_end', id: taskId, error: errorMessage });
-        throw error; // Propagate to stop the main analysis
+        throw error;
     }
 };
 
-// Streaming endpoint for holistic analysis
 app.post('/api/analyze', async (req, res) => {
-    const { files } = req.body;
-    if (!files || !Array.isArray(files)) {
-        return res.status(400).send('Missing "files" array in request body.');
+    const { repoUrl, paths, githubToken } = req.body;
+    if (!repoUrl || !paths || !Array.isArray(paths)) {
+        return res.status(400).send('Missing repoUrl or paths in request body.');
     }
     
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     
     try {
-        sendEvent(res, { type: 'system', message: 'Backend connection established. Preparing files...' });
-
-        // Incrementally build the context string to avoid blocking the event loop.
-        // This makes the process transparent to the client and prevents stalling.
-        let fileContentsString = '';
-        sendEvent(res, { type: 'system', message: 'Building analysis context from files...' });
-        for (const file of files) {
-            // Send an event for each file being processed.
-            sendEvent(res, { type: 'processing_file', path: file.path });
-            fileContentsString += `// FILE: ${file.path}\n${file.content}\n\n---\n\n`;
-            // Yield to the event loop to allow Node.js to send the event and remain responsive.
-            await new Promise(resolve => setTimeout(resolve, 0)); 
-        }
-        sendEvent(res, { type: 'system', message: 'Context built. Starting analysis tasks.' });
+        sendEvent(res, { type: 'system', message: 'Backend connection established.' });
         
-        // Define the sequence of analysis tasks
+        const parsedRepo = parseGitHubUrl(repoUrl);
+        if (!parsedRepo) throw new Error("Invalid GitHub URL provided.");
+        const { owner, repo } = parsedRepo;
+
+        let fileContentsString = '';
+        sendEvent(res, { type: 'system', message: 'Fetching repository files from GitHub...' });
+        
+        for (const path of paths) {
+            let content = '';
+            try {
+                content = await fetchFileContent(owner, repo, path, githubToken);
+                 // Send the content back to the client for the snippet UI
+                sendEvent(res, { type: 'processing_file', path: path, content: content });
+            } catch (fetchError) {
+                console.warn(`Could not fetch ${path}:`, fetchError.message);
+                content = `// Error fetching content: ${fetchError.message}`;
+                sendEvent(res, { type: 'processing_file', path: path, content: content });
+            }
+            fileContentsString += `// FILE: ${path}\n${content}\n\n---\n\n`;
+            await new Promise(resolve => setTimeout(resolve, 10)); // Yield with a small delay
+        }
+        
+        sendEvent(res, { type: 'system', message: 'All files processed. Starting analysis tasks.' });
+        
         const tasks = [
             { id: 'summary', title: '1. Project Summary', prompt: `Provide a concise, one-paragraph summary of this project's purpose based on its file structure and code. Codebase:\n${fileContentsString}` },
             { id: 'tech_stack', title: '2. Tech Stack Analysis', prompt: `Analyze the tech stack. Identify the primary languages, frameworks, and key libraries. Present as a markdown list. Codebase:\n${fileContentsString}` },
@@ -151,25 +168,18 @@ app.post('/api/analyze', async (req, res) => {
             { id: 'suggestions', title: '5. Actionable Suggestions', prompt: `List up to 5 specific, actionable improvements for this codebase. Codebase:\n${fileContentsString}` },
         ];
         
-        // Execute tasks sequentially
         for (const task of tasks) {
             await performStreamingTask(res, task.id, task.title, task.prompt);
         }
 
     } catch (error) {
         console.error("Analysis process terminated due to an error:", error);
-        const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-        // Ensure a final error event is sent to the client for display
-        sendEvent(res, { type: 'error', message: `A fatal error occurred on the server: ${errorMessage}` });
-        
+        const errorMessage = error instanceof Error ? error.message : 'An unknown server error occurred';
+        sendEvent(res, { type: 'error', message: `A fatal error occurred: ${errorMessage}` });
     } finally {
-        // Ensure the response is always ended.
-        if (!res.writableEnded) {
-            res.end();
-        }
+        if (!res.writableEnded) res.end();
     }
 });
-
 
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);

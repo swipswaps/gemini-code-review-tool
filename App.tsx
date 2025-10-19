@@ -1,8 +1,7 @@
 
 import React, { useReducer, useCallback, useEffect } from 'react';
-// FIX: Removed unused HolisticAnalysisResult type
-import type { RepoTreeNode, RepoFileWithContent, RepoTreeFolder, RepoAnalysisStreamEvent, AnalysisTask } from './types';
-import { fetchRepoRoot, fetchFolderContents, fetchAllFileContents, fetchFileContent, parseGitHubUrl } from './services/githubService';
+import type { RepoTreeNode, RepoFileWithContent, RepoTreeFolder, AnalysisTask } from './types';
+import { fetchRepoRoot, fetchFolderContents, fetchAllFilePaths, parseGitHubUrl } from './services/githubService';
 import { analyzeRepositoryStream } from './services/geminiService';
 import { RepoInput } from './components/RepoInput';
 import { FileBrowser } from './components/FileBrowser';
@@ -21,7 +20,8 @@ type AppState = {
   selectedFilePaths: Set<string>;
   filesForReview: RepoFileWithContent[] | null;
   analysisTasks: AnalysisTask[];
-  allFilesWithContent: RepoFileWithContent[] | null;
+  // This now holds file content only when needed for the UI (e.g. snippets), not for sending to backend.
+  allFilesWithContent: Map<string, string>;
   currentlyProcessingFile: string | null;
   logs: string[];
   error: string | null;
@@ -38,11 +38,10 @@ type AppAction =
   | { type: 'SET_ALL_FILES_SELECTED'; payload: { nodes: RepoTreeNode[]; select: boolean } }
   | { type: 'CLEAR_SELECTION' }
   | { type: 'START_FILE_REVIEW' }
-  | { type: 'FILE_REVIEW_SUCCESS'; payload: RepoFileWithContent[] }
-  | { type: 'FILE_REVIEW_FAILURE'; payload: string }
+  | { type: 'FETCH_REVIEW_FILES_SUCCESS'; payload: RepoFileWithContent[] }
+  | { type: 'FETCH_REVIEW_FILES_FAILURE'; payload: string }
   | { type: 'START_REPO_ANALYSIS' }
-  | { type: 'FETCH_ANALYSIS_FILES_SUCCESS'; payload: RepoFileWithContent[] }
-  | { type: 'REPO_ANALYSIS_PROCESSING_FILE'; payload: string }
+  | { type: 'REPO_ANALYSIS_PROCESSING_FILE'; payload: { path: string, content: string } }
   | { type: 'REPO_ANALYSIS_SYSTEM_EVENT', payload: string }
   | { type: 'REPO_ANALYSIS_TASK_START', payload: { id: string, title: string } }
   | { type: 'REPO_ANALYSIS_TASK_CHUNK', payload: { id: string, chunk: string } }
@@ -61,13 +60,13 @@ const initialState: AppState = {
   selectedFilePaths: new Set(),
   filesForReview: null,
   analysisTasks: [],
-  allFilesWithContent: null,
+  allFilesWithContent: new Map(),
   currentlyProcessingFile: null,
   logs: [],
   error: null,
 };
 
-const getAllFilePaths = (nodes: RepoTreeNode[]): string[] => {
+const getAllFilePathsFromTree = (nodes: RepoTreeNode[]): string[] => {
   const paths: string[] = [];
   const traverse = (node: RepoTreeNode) => {
     if (node.type === 'file') paths.push(node.path);
@@ -114,7 +113,7 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     }
     case 'SET_ALL_FILES_SELECTED': {
         if (action.payload.select) {
-            const allPaths = getAllFilePaths(action.payload.nodes);
+            const allPaths = getAllFilePathsFromTree(action.payload.nodes);
             return { ...state, selectedFilePaths: new Set(allPaths) };
         }
         return { ...state, selectedFilePaths: new Set() };
@@ -123,16 +122,17 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
       return { ...state, selectedFilePaths: new Set() };
     case 'START_FILE_REVIEW':
       return { ...state, status: 'fetching_files', error: null };
-    case 'FILE_REVIEW_SUCCESS':
+    case 'FETCH_REVIEW_FILES_SUCCESS':
       return { ...state, status: 'reviewing_files', filesForReview: action.payload, selectedFilePaths: new Set() };
-    case 'FILE_REVIEW_FAILURE':
+    case 'FETCH_REVIEW_FILES_FAILURE':
       return { ...state, status: 'error', error: action.payload };
     case 'START_REPO_ANALYSIS':
-      return { ...state, status: 'analyzing_repo', analysisTasks: [], allFilesWithContent: null, error: null, logs: [], currentlyProcessingFile: null };
-    case 'FETCH_ANALYSIS_FILES_SUCCESS':
-        return { ...state, allFilesWithContent: action.payload };
-    case 'REPO_ANALYSIS_PROCESSING_FILE':
-        return { ...state, currentlyProcessingFile: action.payload };
+      return { ...state, status: 'analyzing_repo', analysisTasks: [], allFilesWithContent: new Map(), error: null, logs: [], currentlyProcessingFile: null };
+    case 'REPO_ANALYSIS_PROCESSING_FILE': {
+        const newFileMap = new Map(state.allFilesWithContent);
+        newFileMap.set(action.payload.path, action.payload.content);
+        return { ...state, currentlyProcessingFile: action.payload.path, allFilesWithContent: newFileMap };
+    }
     case 'REPO_ANALYSIS_SYSTEM_EVENT':
         return { ...state, logs: [...state.logs, `[SYSTEM] ${action.payload}`] };
     case 'REPO_ANALYSIS_TASK_START':
@@ -189,6 +189,7 @@ export default function App(): React.ReactElement {
       const fetchedTree = await fetchRepoRoot(urlToFetch, githubToken);
       dispatch({ type: 'FETCH_REPO_SUCCESS', payload: fetchedTree });
     } catch (err) {
+      // FIX: Safely handle 'unknown' type from catch block.
       const message = err instanceof Error ? err.message : 'An unknown error occurred.';
       dispatch({ type: 'FETCH_REPO_FAILURE', payload: message });
     }
@@ -226,7 +227,7 @@ export default function App(): React.ReactElement {
     if (selectedFilePaths.size === 0) return;
     const parsed = parseGitHubUrl(repoUrl);
     if (!parsed) {
-      dispatch({ type: 'FILE_REVIEW_FAILURE', payload: "Could not parse repository URL to fetch files." });
+      dispatch({ type: 'FETCH_REVIEW_FILES_FAILURE', payload: "Could not parse repository URL to fetch files." });
       return;
     }
 
@@ -234,53 +235,68 @@ export default function App(): React.ReactElement {
     const { owner, repo } = parsed;
     try {
       const paths = Array.from(selectedFilePaths);
-      const results = await Promise.allSettled(paths.map(path => fetchFileContent(owner, repo, path, githubToken)));
-      const filesToReview = results.map((result, index) => {
-        const path = paths[index];
-        if (result.status === 'fulfilled') return { path, content: result.value };
-        const errorMessage = result.reason instanceof Error ? result.reason.message : 'An unknown error occurred.';
-        return { path, content: '', error: errorMessage };
+      // We need the content for review, so we use a different helper here.
+      const filesToReview: RepoFileWithContent[] = [];
+      const results = await Promise.allSettled(paths.map(path => 
+        fetch( `https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+            headers: githubToken ? { 'Authorization': `Bearer ${githubToken}` } : {}
+        }).then(res => {
+            if (!res.ok) throw new Error(`HTTP error ${res.status} for ${path}`);
+            return res.json();
+        }).then((data): { path: string, content: string } => {
+            if (data.encoding !== 'base64' || typeof data.content !== 'string') throw new Error(`Invalid content for ${path}`);
+            return { path, content: atob(data.content) };
+        })
+      ));
+
+      results.forEach((result, index) => {
+          const path = paths[index];
+          if (result.status === 'fulfilled') {
+              filesToReview.push(result.value);
+          } else {
+              // FIX: Safely handle 'unknown' type from Promise.allSettled rejection reason.
+              const errorMessage = result.reason instanceof Error ? result.reason.message : 'An unknown error occurred.';
+              filesToReview.push({ path, content: '', error: errorMessage });
+          }
       });
-      dispatch({ type: 'FILE_REVIEW_SUCCESS', payload: filesToReview });
+      dispatch({ type: 'FETCH_REVIEW_FILES_SUCCESS', payload: filesToReview });
     } catch (err) {
-      // FIX: Handle unknown error type from catch block before using.
       const message = err instanceof Error ? err.message : 'An unknown error occurred while fetching files.';
-      dispatch({ type: 'FILE_REVIEW_FAILURE', payload: message });
+      dispatch({ type: 'FETCH_REVIEW_FILES_FAILURE', payload: message });
     }
   }, [repoUrl, selectedFilePaths, githubToken]);
 
   const handleStartRepoAnalysis = useCallback(async () => {
     if (repoTree.length === 0 || !repoUrl) return;
-    const parsed = parseGitHubUrl(repoUrl);
-    if (!parsed) {
-      dispatch({ type: 'REPO_ANALYSIS_FAILURE', payload: 'Cannot analyze repository: Invalid GitHub URL.' });
-      return;
-    }
 
     dispatch({ type: 'START_REPO_ANALYSIS' });
-    dispatch({ type: 'ADD_LOG', payload: '[SYSTEM] Initiating analysis request to backend...' });
-
-    const { owner, repo } = parsed;
+    dispatch({ type: 'ADD_LOG', payload: '[SYSTEM] Initiating analysis...' });
 
     try {
-      // Step 1: Fetch all file contents
-      dispatch({ type: 'ADD_LOG', payload: '[SYSTEM] Starting recursive file fetch...' });
-      const onFetchProgress = (message: string) => dispatch({ type: 'ADD_LOG', payload: message });
-      const fetchedContents = await fetchAllFileContents(owner, repo, repoTree, githubToken, onFetchProgress);
-
-      // Step 2: Store files in state 
-      dispatch({ type: 'FETCH_ANALYSIS_FILES_SUCCESS', payload: fetchedContents });
-      dispatch({ type: 'ADD_LOG', payload: `[SYSTEM] Fetched ${fetchedContents.length} files. Sending to backend for analysis.` });
+      const parsed = parseGitHubUrl(repoUrl);
+      if (!parsed) {
+        throw new Error("Invalid GitHub URL. Cannot start analysis.");
+      }
+      const { owner, repo } = parsed;
       
-      // Step 3: Start the backend analysis stream
-      const stream = analyzeRepositoryStream(fetchedContents);
+      // Step 1: Fetch all file paths without content. This is fast and reliable.
+      dispatch({ type: 'ADD_LOG', payload: '[SYSTEM] Starting recursive file path discovery...' });
+      const onProgress = (message: string) => dispatch({ type: 'ADD_LOG', payload: message });
+      const allPaths = await fetchAllFilePaths(owner, repo, githubToken, repoTree, onProgress);
+      
+      dispatch({ type: 'ADD_LOG', payload: `[SYSTEM] Found ${allPaths.length} files. Sending list to backend for processing.` });
+      
+      // Step 2: Start the backend analysis stream, sending only the paths.
+      // The backend will now fetch content and stream progress.
+      const stream = analyzeRepositoryStream(repoUrl, allPaths, githubToken);
+
       for await (const event of stream) {
         switch(event.type) {
             case 'system':
                 dispatch({ type: 'REPO_ANALYSIS_SYSTEM_EVENT', payload: event.message });
                 break;
             case 'processing_file':
-                dispatch({ type: 'REPO_ANALYSIS_PROCESSING_FILE', payload: event.path });
+                dispatch({ type: 'REPO_ANALYSIS_PROCESSING_FILE', payload: event });
                 break;
             case 'task_start':
                 dispatch({ type: 'REPO_ANALYSIS_TASK_START', payload: event });
@@ -322,7 +338,7 @@ export default function App(): React.ReactElement {
           <RepoAnalyzer 
               repoUrl={repoUrl}
               analysisTasks={analysisTasks}
-              originalFiles={allFilesWithContent}
+              filesWithContent={allFilesWithContent}
               currentlyProcessingFile={currentlyProcessingFile}
               isLoading={status === 'analyzing_repo'}
               logs={logs}

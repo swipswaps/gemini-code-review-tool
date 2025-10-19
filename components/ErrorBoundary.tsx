@@ -17,6 +17,10 @@ export class ErrorBoundary extends Component<Props, State> {
     error: null,
   };
 
+  constructor(props: Props) {
+    super(props);
+  }
+
   static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
   }
@@ -25,16 +29,14 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error("Uncaught error:", error, errorInfo);
   }
   
-  // FIX: The handleReset method has been converted to an arrow function
-  // to ensure `this` is always correctly bound to the component instance.
-  // This resolves errors when trying to access `this.props` or `this.setState`
-  // from within the event handler.
+  // FIX: Changed to an arrow function to ensure `this` is always correctly bound.
+  // This resolves errors when trying to access `this.props` or `this.setState`.
   handleReset = () => {
     if (this.props.onReset) {
       this.props.onReset();
     }
     this.setState({ hasError: false, error: null });
-  };
+  }
 
   render() {
     if (this.state.hasError) {
