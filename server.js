@@ -129,14 +129,18 @@ app.post('/api/analyze', async (req, res) => {
     try {
         sendEvent(res, { type: 'system', message: 'Backend connection established. Preparing files...' });
 
-        // Make the "context building" step visible to the client
+        // Incrementally build the context string to avoid blocking the event loop.
+        // This makes the process transparent to the client and prevents stalling.
+        let fileContentsString = '';
+        sendEvent(res, { type: 'system', message: 'Building analysis context from files...' });
         for (const file of files) {
+            // Send an event for each file being processed.
             sendEvent(res, { type: 'processing_file', path: file.path });
-            // Add a small delay to ensure the event is rendered on the frontend
-            await new Promise(resolve => setTimeout(resolve, 20)); 
+            fileContentsString += `// FILE: ${file.path}\n${file.content}\n\n---\n\n`;
+            // Yield to the event loop to allow Node.js to send the event and remain responsive.
+            await new Promise(resolve => setTimeout(resolve, 0)); 
         }
-
-        const fileContentsString = files.map(file => `// FILE: ${file.path}\n${file.content}\n\n---\n\n`).join('');
+        sendEvent(res, { type: 'system', message: 'Context built. Starting analysis tasks.' });
         
         // Define the sequence of analysis tasks
         const tasks = [

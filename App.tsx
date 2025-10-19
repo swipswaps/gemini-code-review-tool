@@ -1,3 +1,4 @@
+
 import React, { useReducer, useCallback, useEffect } from 'react';
 // FIX: Removed unused HolisticAnalysisResult type
 import type { RepoTreeNode, RepoFileWithContent, RepoTreeFolder, RepoAnalysisStreamEvent, AnalysisTask } from './types';
@@ -242,6 +243,7 @@ export default function App(): React.ReactElement {
       });
       dispatch({ type: 'FILE_REVIEW_SUCCESS', payload: filesToReview });
     } catch (err) {
+      // FIX: Handle unknown error type from catch block before using.
       const message = err instanceof Error ? err.message : 'An unknown error occurred while fetching files.';
       dispatch({ type: 'FILE_REVIEW_FAILURE', payload: message });
     }
