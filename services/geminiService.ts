@@ -1,5 +1,7 @@
+
 import { CODE_SEPARATOR } from '../utils/constants';
-import type { HolisticAnalysisResult, RepoAnalysisStreamEvent } from '../types';
+// FIX: Removed unused HolisticAnalysisResult type
+import type { RepoAnalysisStreamEvent } from '../types';
 
 async function* streamFetch(response: Response): AsyncGenerator<string> {
     const reader = response.body!.getReader();

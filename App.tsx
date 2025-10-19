@@ -1,5 +1,7 @@
+
 import React, { useReducer, useCallback, useEffect } from 'react';
-import type { RepoTreeNode, HolisticAnalysisResult, RepoFileWithContent, RepoTreeFolder, RepoAnalysisStreamEvent } from './types';
+// FIX: Removed unused HolisticAnalysisResult type
+import type { RepoTreeNode, RepoFileWithContent, RepoTreeFolder, RepoAnalysisStreamEvent, AnalysisTask } from './types';
 import { fetchRepoRoot, fetchFolderContents, fetchAllFileContents, fetchFileContent, parseGitHubUrl } from './services/githubService';
 import { analyzeRepositoryStream } from './services/geminiService';
 import { RepoInput } from './components/RepoInput';
@@ -18,9 +20,8 @@ type AppState = {
   repoTree: RepoTreeNode[];
   selectedFilePaths: Set<string>;
   filesForReview: RepoFileWithContent[] | null;
-  holisticAnalysisResult: HolisticAnalysisResult | null;
+  analysisTasks: AnalysisTask[];
   allFilesWithContent: RepoFileWithContent[] | null;
-  repoAnalysisStatusText: string;
   logs: string[];
   error: string | null;
 };
@@ -39,9 +40,11 @@ type AppAction =
   | { type: 'FILE_REVIEW_SUCCESS'; payload: RepoFileWithContent[] }
   | { type: 'FILE_REVIEW_FAILURE'; payload: string }
   | { type: 'START_REPO_ANALYSIS' }
-  | { type: 'REPO_ANALYSIS_STATUS_UPDATE'; payload: string }
-  | { type: 'REPO_ANALYSIS_DATA_CHUNK'; payload: HolisticAnalysisResult }
-  | { type: 'REPO_ANALYSIS_COMPLETE'; payload: { files: RepoFileWithContent[] } }
+  | { type: 'FETCH_ANALYSIS_FILES_SUCCESS'; payload: RepoFileWithContent[] }
+  | { type: 'REPO_ANALYSIS_TASK_START', payload: { id: string, title: string } }
+  | { type: 'REPO_ANALYSIS_TASK_CHUNK', payload: { id: string, chunk: string } }
+  | { type: 'REPO_ANALYSIS_TASK_END', payload: { id: string, error?: string } }
+  | { type: 'REPO_ANALYSIS_COMPLETE' }
   | { type: 'REPO_ANALYSIS_FAILURE'; payload: string }
   | { type: 'ADD_LOG'; payload: string }
   | { type: 'CLEAR_LOGS' }
@@ -54,9 +57,8 @@ const initialState: AppState = {
   repoTree: [],
   selectedFilePaths: new Set(),
   filesForReview: null,
-  holisticAnalysisResult: null,
+  analysisTasks: [],
   allFilesWithContent: null,
-  repoAnalysisStatusText: '',
   logs: [],
   error: null,
 };
@@ -122,15 +124,37 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     case 'FILE_REVIEW_FAILURE':
       return { ...state, status: 'error', error: action.payload };
     case 'START_REPO_ANALYSIS':
-      return { ...state, status: 'analyzing_repo', holisticAnalysisResult: {}, error: null, repoAnalysisStatusText: '', logs: ['[SYSTEM] Starting repository analysis...'] };
-    case 'REPO_ANALYSIS_STATUS_UPDATE':
-      return { ...state, repoAnalysisStatusText: action.payload };
-    case 'REPO_ANALYSIS_DATA_CHUNK':
-        return { ...state, holisticAnalysisResult: { ...state.holisticAnalysisResult, ...action.payload } };
+      return { ...state, status: 'analyzing_repo', analysisTasks: [], allFilesWithContent: null, error: null, logs: ['[SYSTEM] Starting repository analysis...'] };
+    case 'FETCH_ANALYSIS_FILES_SUCCESS':
+        return { ...state, allFilesWithContent: action.payload };
+    case 'REPO_ANALYSIS_TASK_START':
+        return { ...state, analysisTasks: [...state.analysisTasks, { id: action.payload.id, title: action.payload.title, status: 'in_progress', content: '', error: null }]};
+    case 'REPO_ANALYSIS_TASK_CHUNK': {
+        const newTasks = state.analysisTasks.map(task => 
+            task.id === action.payload.id ? { ...task, content: task.content + action.payload.chunk } : task
+        );
+        return { ...state, analysisTasks: newTasks };
+    }
+    case 'REPO_ANALYSIS_TASK_END': {
+        // FIX: Explicitly define the new status to satisfy TypeScript's strict union type for AnalysisTask['status'].
+        // The ternary operator was being inferred as `string`, which is not assignable to the more specific status type.
+        const newTasks = state.analysisTasks.map(task => {
+            if (task.id !== action.payload.id) {
+                return task;
+            }
+            const newStatus: AnalysisTask['status'] = action.payload.error ? 'error' : 'complete';
+            return { 
+                ...task, 
+                status: newStatus, 
+                error: action.payload.error || null 
+            };
+        });
+        return { ...state, analysisTasks: newTasks };
+    }
     case 'REPO_ANALYSIS_COMPLETE':
-      return { ...state, status: 'repo_loaded', allFilesWithContent: action.payload.files };
+      return { ...state, status: 'repo_loaded' };
     case 'REPO_ANALYSIS_FAILURE':
-      return { ...state, status: 'repo_loaded', error: action.payload, holisticAnalysisResult: state.holisticAnalysisResult }; // Keep partial results on failure
+      return { ...state, status: 'repo_loaded', error: action.payload, analysisTasks: state.analysisTasks }; // Keep partial results on failure
     case 'ADD_LOG':
         // Keep the last 200 logs to prevent memory issues
         const nextLogs = [...state.logs, action.payload].slice(-200);
@@ -146,7 +170,7 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
 
 export default function App(): React.ReactElement {
   const [state, dispatch] = useReducer(appReducer, initialState);
-  const { status, repoUrl, githubToken, repoTree, selectedFilePaths, filesForReview, holisticAnalysisResult, allFilesWithContent, repoAnalysisStatusText, logs, error } = state;
+  const { status, repoUrl, githubToken, repoTree, selectedFilePaths, filesForReview, analysisTasks, allFilesWithContent, logs, error } = state;
 
   const handleFetchFiles = useCallback(async (urlToFetch: string) => {
     if (!parseGitHubUrl(urlToFetch)) {
@@ -212,9 +236,6 @@ export default function App(): React.ReactElement {
       });
       dispatch({ type: 'FILE_REVIEW_SUCCESS', payload: filesToReview });
     } catch (err) {
-      // FIX: The 'err' object in a catch block is of type 'unknown'.
-      // We must check if it's an instance of Error before accessing its 'message' property
-      // to ensure a string is passed to the dispatch payload.
       const message = err instanceof Error ? err.message : 'An unknown error occurred while fetching files.';
       dispatch({ type: 'FILE_REVIEW_FAILURE', payload: message });
     }
@@ -230,28 +251,36 @@ export default function App(): React.ReactElement {
 
     dispatch({ type: 'START_REPO_ANALYSIS' });
     const { owner, repo } = parsed;
-    let fetchedContents: RepoFileWithContent[] = [];
+
     try {
+      // Step 1: Fetch all file contents
       dispatch({ type: 'ADD_LOG', payload: '[SYSTEM] Starting recursive file fetch...' });
-      const onFetchProgress = (message: string) => {
-        dispatch({ type: 'ADD_LOG', payload: message });
-      };
-      
-      fetchedContents = await fetchAllFileContents(owner, repo, repoTree, githubToken, onFetchProgress);
+      const onFetchProgress = (message: string) => dispatch({ type: 'ADD_LOG', payload: message });
+      const fetchedContents = await fetchAllFileContents(owner, repo, repoTree, githubToken, onFetchProgress);
+
+      // Step 2: Store files in state 
+      dispatch({ type: 'FETCH_ANALYSIS_FILES_SUCCESS', payload: fetchedContents });
       dispatch({ type: 'ADD_LOG', payload: `[SYSTEM] Fetched ${fetchedContents.length} files. Sending to backend for analysis.` });
       
+      // Step 3: Start the backend analysis stream
       const stream = analyzeRepositoryStream(fetchedContents);
       for await (const event of stream) {
-        if (event.type === 'status') {
-          dispatch({ type: 'REPO_ANALYSIS_STATUS_UPDATE', payload: event.message });
-          dispatch({ type: 'ADD_LOG', payload: `[ANALYSIS] ${event.message}` });
-        } else if (event.type === 'data') {
-          dispatch({ type: 'REPO_ANALYSIS_DATA_CHUNK', payload: event.payload });
-        } else if (event.type === 'error') {
-          dispatch({ type: 'ADD_LOG', payload: `[ERROR] Analysis step failed: ${event.message}` });
+        switch(event.type) {
+            case 'task_start':
+                dispatch({ type: 'REPO_ANALYSIS_TASK_START', payload: event });
+                break;
+            case 'task_chunk':
+                dispatch({ type: 'REPO_ANALYSIS_TASK_CHUNK', payload: event });
+                break;
+            case 'task_end':
+                dispatch({ type: 'REPO_ANALYSIS_TASK_END', payload: event });
+                break;
+             case 'error':
+                 dispatch({ type: 'ADD_LOG', payload: `[ERROR] Analysis step failed: ${event.message}` });
+                 break;
         }
       }
-      dispatch({ type: 'REPO_ANALYSIS_COMPLETE', payload: { files: fetchedContents } });
+      dispatch({ type: 'REPO_ANALYSIS_COMPLETE' });
 
     } catch (err) {
       const message = err instanceof Error ? err.message : 'An unknown error occurred.';
@@ -271,15 +300,14 @@ export default function App(): React.ReactElement {
         </ErrorBoundary>
       );
     }
-    if (status === 'analyzing_repo' || (status === 'repo_loaded' && holisticAnalysisResult)) {
+    if (status === 'analyzing_repo' || (status === 'repo_loaded' && analysisTasks.length > 0)) {
       return (
         <ErrorBoundary onReset={() => dispatch({ type: 'RESET' })}>
           <RepoAnalyzer 
               repoUrl={repoUrl}
-              analysisResult={holisticAnalysisResult}
+              analysisTasks={analysisTasks}
               originalFiles={allFilesWithContent}
               isLoading={status === 'analyzing_repo'}
-              statusText={repoAnalysisStatusText}
               logs={logs}
               onReset={() => dispatch({ type: 'RESET' })}
           />

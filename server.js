@@ -93,23 +93,28 @@ app.post('/api/lint', async (req, res) => {
 });
 
 
-// Helper to perform an analysis step with status updates
-const performAnalysisStep = async (res, statusMessage, geminiCall) => {
-    sendEvent(res, { type: 'status', message: statusMessage });
+// Helper to perform a streaming analysis task
+const performStreamingTask = async (res, taskId, taskTitle, prompt) => {
+    sendEvent(res, { type: 'task_start', id: taskId, title: taskTitle });
     try {
-        const result = await geminiCall();
-        if (result) { // Only send data if there is a result
-            sendEvent(res, { type: 'data', payload: result });
+        const responseStream = await ai.models.generateContentStream({
+            model: "gemini-2.5-pro",
+            contents: prompt,
+        });
+
+        for await (const chunk of responseStream) {
+            if (chunk.text) {
+                sendEvent(res, { type: 'task_chunk', id: taskId, chunk: chunk.text });
+            }
         }
-        return result;
+        sendEvent(res, { type: 'task_end', id: taskId });
     } catch (error) {
-        console.error(`Error during "${statusMessage}":`, error);
+        console.error(`Error during task "${taskTitle}":`, error);
         const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred';
-        sendEvent(res, { type: 'error', message: `Failed during: ${statusMessage}. Error: ${errorMessage}` });
-        throw error; // Propagate error to stop the analysis
+        sendEvent(res, { type: 'task_end', id: taskId, error: errorMessage });
+        throw error; // Propagate to stop the main analysis
     }
 };
-
 
 // Streaming endpoint for holistic analysis
 app.post('/api/analyze', async (req, res) => {
@@ -121,68 +126,30 @@ app.post('/api/analyze', async (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     
     try {
-        const fileContentsString = files.map(f => `// FILE: ${f.path}\n${f.content}`).join('\n\n---\n\n');
+        let fileContentsString = files.map(file => `// FILE: ${file.path}\n${file.content}\n\n---\n\n`).join('');
         
-        // Step 1: Overall Analysis (Streaming)
-        sendEvent(res, { type: 'status', message: 'Analyzing overall architecture...' });
-        const overallAnalysisStream = await ai.models.generateContentStream({
-            model: "gemini-2.5-pro",
-            contents: `Analyze the overall architecture of this codebase. What are its strengths and weaknesses? Provide a concise, high-level summary in markdown. Codebase:\n${fileContentsString}`,
-        });
+        // Define the sequence of analysis tasks
+        const tasks = [
+            { id: 'summary', title: '1. Project Summary', prompt: `Provide a concise, one-paragraph summary of this project's purpose based on its file structure and code. Codebase:\n${fileContentsString}` },
+            { id: 'tech_stack', title: '2. Tech Stack Analysis', prompt: `Analyze the tech stack. Identify the primary languages, frameworks, and key libraries. Present as a markdown list. Codebase:\n${fileContentsString}` },
+            { id: 'architecture', title: '3. Architectural Review', prompt: `Critique the overall architecture. Discuss strengths, weaknesses, and potential improvements in markdown format. Codebase:\n${fileContentsString}` },
+            { id: 'error_trends', title: '4. Common Error Trends', prompt: `Identify up to 3 recurring problems or anti-patterns. For each, describe the trend and list affected files. Codebase:\n${fileContentsString}` },
+            { id: 'suggestions', title: '5. Actionable Suggestions', prompt: `List up to 5 specific, actionable improvements for this codebase. Codebase:\n${fileContentsString}` },
+        ];
         
-        let accumulatedAnalysis = '';
-        for await (const chunk of overallAnalysisStream) {
-            if (chunk.text) {
-                accumulatedAnalysis += chunk.text;
-                sendEvent(res, { type: 'data', payload: { overallAnalysis: accumulatedAnalysis }});
-            }
+        // Execute tasks sequentially
+        for (const task of tasks) {
+            await performStreamingTask(res, task.id, task.title, task.prompt);
         }
 
-        // Step 2: Dependency Review
-        await performAnalysisStep(res, 'Reviewing package.json for dependencies...', async () => {
-            const packageJsonFile = files.find(f => f.path.endsWith('package.json'));
-            if (!packageJsonFile) {
-                sendEvent(res, { type: 'status', message: 'package.json not found, skipping dependency review.' });
-                return null; // Return null to indicate no data
-            }
-            const depReviewResponse = await ai.models.generateContent({
-                model: "gemini-2.5-pro",
-                contents: `Analyze this package.json for potential issues like outdated dependencies, security vulnerabilities, or strange configurations. Provide a markdown summary of your analysis and a list of suggestions. package.json:\n${packageJsonFile.content}`,
-                config: { responseMimeType: "application/json", responseSchema: { type: Type.OBJECT, properties: { analysis: { type: Type.STRING }, suggestions: { type: Type.ARRAY, items: { type: Type.STRING }}}}}
-            });
-            return { dependencyReview: JSON.parse(depReviewResponse.text.trim()) };
-        });
-
-        // Step 3: Error Trends
-        await performAnalysisStep(res, 'Identifying common error trends...', async () => {
-             const errorTrendsResponse = await ai.models.generateContent({
-                model: "gemini-2.5-pro",
-                contents: `Identify up to 3 recurring problems or anti-patterns in this codebase. For each trend, provide a description and a list of files affected. Codebase:\n${fileContentsString}`,
-                config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { trendDescription: { type: Type.STRING }, filesAffected: { type: Type.ARRAY, items: { type: Type.STRING } } } } } }
-            });
-            return { errorTrends: JSON.parse(errorTrendsResponse.text.trim()) };
-        });
-
-        // Step 4: Suggested Fixes
-        await performAnalysisStep(res, 'Generating suggested fixes...', async () => {
-            const suggestedFixesResponse = await ai.models.generateContent({
-                model: "gemini-2.5-pro",
-                contents: `Based on the codebase, provide a list of up to 5 specific, actionable improvements. For each, give the file path, a markdown description of the fix, and the complete, corrected code for that file. Codebase:\n${fileContentsString}`,
-                config: { responseMimeType: "application/json", responseSchema: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { filePath: { type: Type.STRING }, description: { type: Type.STRING }, correctedCode: { type: Type.STRING } } } } }
-            });
-            return { suggestedFixes: JSON.parse(suggestedFixesResponse.text.trim()) };
-        });
-
-        sendEvent(res, { type: 'status', message: 'Analysis complete.' });
         res.end();
 
     } catch (error) {
-        // The error is already logged and sent to the client by performAnalysisStep,
-        // so we just need to ensure the response is properly ended.
         console.error("Analysis process terminated due to an error.");
         if (!res.headersSent) {
            res.status(500).send('An unexpected error occurred during analysis.');
         } else if (!res.writableEnded) {
+            // An error event has already been sent, just end the response.
             res.end();
         }
     }

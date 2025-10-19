@@ -25,6 +25,8 @@ export interface ReviewResult {
   correctedCode: string;
 }
 
+// --- Holistic Analysis Types ---
+
 export interface SuggestedFix {
   filePath: string;
   description: string;
@@ -41,12 +43,18 @@ export interface DependencyReview {
   suggestions: string[];
 }
 
-export interface HolisticAnalysisResult {
-  overallAnalysis?: string;
-  dependencyReview?: DependencyReview;
-  errorTrends?: ErrorTrend[];
-  suggestedFixes?: SuggestedFix[];
+// Represents the state of a single step in the holistic analysis
+export interface AnalysisTask {
+    id: string;
+    title: string;
+    status: 'pending' | 'in_progress' | 'complete' | 'error';
+    content: string; // The streamed markdown content
+    error: string | null;
+    // We can store structured data here later if needed
+    result?: DependencyReview | ErrorTrend[] | SuggestedFix[];
 }
+
+// --- Component State Types ---
 
 export type ReviewStatus = 'idle' | 'streaming' | 'complete' | 'error';
 export type LintingStatus = 'idle' | 'linting' | 'complete' | 'error';
@@ -59,8 +67,11 @@ export interface ReviewState {
   error: string | null;
 }
 
-// Type for streaming analysis updates from the server
+// --- Server Communication Types ---
+
+// Type for streaming analysis updates from the server, now task-based
 export type RepoAnalysisStreamEvent = 
-    | { type: 'status', message: string }
-    | { type: 'data', payload: HolisticAnalysisResult }
+    | { type: 'task_start', id: string, title: string }
+    | { type: 'task_chunk', id: string, chunk: string }
+    | { type: 'task_end', id: string, error?: string }
     | { type: 'error', message: string };
