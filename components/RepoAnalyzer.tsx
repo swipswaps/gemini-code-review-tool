@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { AnalysisTask, RepoFileWithContent } from '../types';
 import { Spinner } from './Spinner';
 import { PlusCircleIcon } from './icons/PlusCircleIcon';
@@ -7,6 +7,7 @@ import { parseGitHubUrl } from '../services/githubService';
 import { LogViewer } from './LogViewer';
 import { AnalysisTaskItem } from './AnalysisTask';
 import { InfoIcon } from './icons/InfoIcon';
+import { ChevronIcon } from './icons/ChevronIcon';
 
 interface RepoAnalyzerProps {
   repoUrl: string;
@@ -19,7 +20,8 @@ interface RepoAnalyzerProps {
 }
 
 export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTasks, filesWithContent, currentlyProcessingFile, isLoading, logs, onReset }) => {
-  
+  const [isLogViewerOpen, setIsLogViewerOpen] = useState(false);
+
   const handleExport = () => {
     if (analysisTasks.length === 0 || !repoUrl) return;
 
@@ -74,7 +76,6 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTas
       subHeaderText = "Analysis complete.";
   }
 
-  // This is the initial "idle" state before any analysis has been triggered.
   if (!isLoading && !hasStartedTasks) {
     return (
       <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
@@ -133,9 +134,27 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisTas
           {hasStartedTasks && analysisTasks.map(task => <AnalysisTaskItem key={task.id} task={task} />)}
       </div>
       
-      {/* 3. Persistent Log Viewer */}
-      <div className="w-full flex-shrink-0 h-1/3 min-h-48">
-          <LogViewer logs={logs} />
+      {/* 3. Collapsible Log Viewer */}
+       <div className="w-full flex-shrink-0">
+          <div className="bg-gray-900 rounded-md border border-gray-700 flex flex-col transition-all duration-300">
+              <button 
+                  onClick={() => setIsLogViewerOpen(!isLogViewerOpen)}
+                  className="p-2 w-full text-left flex justify-between items-center bg-gray-800/50 hover:bg-gray-700/50 rounded-t-md"
+                  aria-expanded={isLogViewerOpen}
+                  aria-controls="log-viewer-content"
+              >
+                  <h3 className="font-semibold text-gray-400">System Logs</h3>
+                  <div className="flex items-center gap-2">
+                      <span className="text-xs px-2 py-0.5 bg-gray-700 rounded-full">{logs.length} entries</span>
+                      <ChevronIcon className={`w-5 h-5 transition-transform ${isLogViewerOpen ? 'rotate-180' : ''}`} />
+                  </div>
+              </button>
+              {isLogViewerOpen && (
+                  <div id="log-viewer-content" className="h-48">
+                      <LogViewer logs={logs} />
+                  </div>
+              )}
+          </div>
       </div>
     </div>
   );

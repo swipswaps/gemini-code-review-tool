@@ -105,7 +105,7 @@ export const FileBrowser: React.FC<FileBrowserProps> = ({ nodes, selectedFilePat
     };
     nodes.forEach(traverse);
     return paths;
-  }, [nodes, selectedFilePaths]); // Re-calculate if selection changes to correctly get all known paths
+  }, [nodes]); // FIX: Removed selectedFilePaths from dependency array to prevent unnecessary recalculations.
 
   const allSelected = allFilePaths.length > 0 && selectedFilePaths.size >= allFilePaths.length;
 

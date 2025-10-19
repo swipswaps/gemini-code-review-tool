@@ -76,7 +76,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ originalCode, correctedC
     );
     
   return (
-    <div className="flex flex-col gap-4 h-[50vh] min-h-96 diff-viewer-container">
+    <div className="flex flex-col gap-4 h-full diff-viewer-container">
       <div className="w-full flex flex-col bg-gray-900/70 rounded-lg border border-gray-700 overflow-hidden h-full">
         <div className="flex-shrink-0 text-md font-semibold p-3 bg-gray-800/80 border-b border-gray-700 flex">
             <div className="w-1/2">Original</div>

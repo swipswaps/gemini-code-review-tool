@@ -1,9 +1,4 @@
 
-
-
-
-
-
 import React, { useReducer, useCallback, useEffect } from 'react';
 import type { RepoTreeNode, RepoFileWithContent, RepoTreeFolder, AnalysisTask } from './types';
 import { fetchRepoRoot, fetchFolderContents, fetchAllFilePaths, parseGitHubUrl } from './services/githubService';
@@ -194,7 +189,6 @@ export default function App(): React.ReactElement {
       const fetchedTree = await fetchRepoRoot(urlToFetch, githubToken);
       dispatch({ type: 'FETCH_REPO_SUCCESS', payload: fetchedTree });
     } catch (err) {
-      // FIX: The 'err' object in a catch block is of type 'unknown'. Added a type guard to safely access the error message.
       const message = err instanceof Error ? err.message : 'An unknown error occurred.';
       dispatch({ type: 'FETCH_REPO_FAILURE', payload: message });
     }
@@ -266,7 +260,6 @@ export default function App(): React.ReactElement {
       });
       dispatch({ type: 'FETCH_REVIEW_FILES_SUCCESS', payload: filesToReview });
     } catch (err) {
-      // FIX: The 'err' object in a catch block is of type 'unknown'. Added a type guard to safely access the error message.
       const message = err instanceof Error ? err.message : 'An unknown error occurred while fetching files.';
       dispatch({ type: 'FETCH_REVIEW_FILES_FAILURE', payload: message });
     }

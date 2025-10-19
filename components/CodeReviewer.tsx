@@ -8,7 +8,6 @@ import { PlusCircleIcon } from './icons/PlusCircleIcon';
 import { WandIcon } from './icons/WandIcon';
 import { ReviewComments } from './ReviewComments';
 import { CODE_SEPARATOR } from '../utils/constants';
-import { ChevronIcon } from './icons/ChevronIcon';
 
 interface CodeReviewerProps {
   files: RepoFileWithContent[];
@@ -17,9 +16,10 @@ interface CodeReviewerProps {
 
 export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) => {
   const [reviewStates, setReviewStates] = useState<Map<string, ReviewState>>(new Map());
-  const [openFilePath, setOpenFilePath] = useState<string | null>(files.length > 0 ? files[0].path : null);
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(files.length > 0 ? files[0].path : null);
   const [highlightedLines, setHighlightedLines] = useState<Set<number> | null>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
+  const mainPanelRef = useRef<HTMLElement>(null);
 
   const runReview = useCallback(async (file: RepoFileWithContent) => {
     setReviewStates(prev => new Map(prev).set(file.path, {
@@ -36,7 +36,6 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
       for await (const chunk of stream) {
         fullResponse += chunk;
         setReviewStates(prev => {
-            // FIX: Added a guard to ensure currentState is not undefined before spreading.
             const currentState = prev.get(file.path);
             if (!currentState) return prev;
             const newStates = new Map(prev);
@@ -64,7 +63,6 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred.';
       setReviewStates(prev => {
-          // FIX: Added a guard to ensure currentState is not undefined before spreading.
           const currentState = prev.get(file.path);
           if (!currentState) return prev;
           const newStates = new Map(prev);
@@ -76,7 +74,6 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
   
     const handleLintFile = useCallback(async (file: RepoFileWithContent) => {
         setReviewStates(prev => {
-            // FIX: Added a guard to ensure currentState is not undefined before spreading.
             const currentState = prev.get(file.path);
             if (!currentState) return prev;
             const newStates = new Map(prev);
@@ -89,7 +86,6 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
             
             setReviewStates(prev => {
                 const currentState = prev.get(file.path);
-                // FIX: Added a guard to ensure currentState and its result property are not null/undefined before spreading.
                 if (!currentState || !currentState.result) return prev;
                 const newStates = new Map(prev);
                 const newResult = { ...currentState.result, correctedCode: lintedCode };
@@ -104,7 +100,6 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
         } catch (err) {
             console.error("Linting failed:", err);
             setReviewStates(prev => {
-                // FIX: Added a guard to ensure currentState is not undefined before spreading.
                 const currentState = prev.get(file.path);
                 if (!currentState) return prev;
                 const newStates = new Map(prev);
@@ -145,8 +140,8 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
   }, [files, runReview]);
   
   useEffect(() => {
-    const currentRef = commentsRef.current;
-    if (!currentRef) return;
+    const commentsElement = commentsRef.current;
+    if (!commentsElement) return;
     
     const handleClick = (e: MouseEvent) => {
         const target = e.target as HTMLElement;
@@ -166,7 +161,7 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
                     }
                     setHighlightedLines(lines);
                     
-                    const diffViewer = currentRef.closest('.review-panel-content')?.querySelector('.diff-viewer-container');
+                    const diffViewer = mainPanelRef.current?.querySelector('.diff-viewer-container');
                     if (diffViewer instanceof HTMLElement) {
                         diffViewer.classList.remove('animate-pulse-once');
                         void diffViewer.offsetWidth; 
@@ -177,16 +172,15 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
         }
     };
     
-    currentRef.addEventListener('click', handleClick);
+    commentsElement.addEventListener('click', handleClick);
     
     return () => {
-        currentRef.removeEventListener('click', handleClick);
+        commentsElement.removeEventListener('click', handleClick);
     };
-  }, [reviewStates, openFilePath]);
+  }, [reviewStates, activeFilePath]);
 
-
-  const toggleAccordion = (path: string) => {
-    setOpenFilePath(prev => (prev === path ? null : path));
+  const selectFile = (path: string) => {
+    setActiveFilePath(path);
     setHighlightedLines(null);
   };
   
@@ -198,6 +192,9 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
         case 'idle': return <span className="text-gray-500">...</span>;
     }
   };
+
+  const activeFile = files.find(f => f.path === activeFilePath);
+  const activeFileState = activeFilePath ? reviewStates.get(activeFilePath) : null;
 
   return (
     <div className="flex flex-col h-full space-y-4">
@@ -212,58 +209,75 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
         </button>
       </div>
       
-      <div className="flex-grow space-y-2 overflow-y-auto pr-2">
-        {files.map(file => {
-          const state = reviewStates.get(file.path);
-          if (!state) return null;
-          const isOpen = openFilePath === file.path;
+      <div className="flex-grow flex gap-4 min-h-0">
+        {/* Sidebar */}
+        <nav className="w-1/3 max-w-sm bg-gray-800/50 rounded-lg border border-gray-700 overflow-y-auto flex flex-col">
+            <h3 className="p-4 font-semibold text-gray-300 border-b border-gray-700 flex-shrink-0 sticky top-0 bg-gray-800/80 backdrop-blur-sm">Files for Review</h3>
+            <ul className="p-2 space-y-1">
+                {files.map(file => {
+                    const state = reviewStates.get(file.path);
+                    const isActive = activeFilePath === file.path;
+                    return (
+                        <li key={file.path}>
+                            <button 
+                                onClick={() => selectFile(file.path)}
+                                className={`w-full text-left flex items-center gap-3 p-2 rounded-md transition-colors ${isActive ? 'bg-purple-600/30 text-purple-200' : 'hover:bg-gray-700/50 text-gray-400'}`}
+                            >
+                                <div className="flex-shrink-0 w-4">
+                                    {state ? getStatusIndicator(state.status) : null}
+                                </div>
+                                <span className="truncate text-sm" title={file.path}>{file.path}</span>
+                            </button>
+                        </li>
+                    )
+                })}
+            </ul>
+        </nav>
 
-          return (
-            <div key={file.path} className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden transition-all duration-300 flex flex-col">
-                <button onClick={() => toggleAccordion(file.path)} className="w-full flex justify-between items-center p-4 text-left hover:bg-gray-700/50 flex-shrink-0">
-                    <div className="flex items-center gap-3 truncate">
-                        {getStatusIndicator(state.status)}
-                        <span className="font-medium text-gray-300 truncate" title={file.path}>{file.path}</span>
-                    </div>
-                    <ChevronIcon className={`w-5 h-5 transition-transform flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`} />
-                </button>
-                {isOpen && (
-                     <div className="review-panel-content border-t border-gray-700 bg-gray-900/50 flex-grow min-h-0 flex flex-col">
-                        {state.status === 'error' ? (
-                            <div className="p-4 bg-red-900/50 border border-red-700 text-red-300 rounded-lg m-4">{state.error}</div>
-                        ) : (
-                            <div className="flex flex-col gap-4 p-4 flex-grow min-h-0">
-                                <DiffViewer 
-                                  originalCode={file.content} 
-                                  correctedCode={state.result?.correctedCode ?? file.content} 
-                                  highlightedLines={highlightedLines} 
-                                />
-                                
-                                {state.status === 'complete' && state.result && (
-                                    <div className="flex justify-end border-b border-gray-700 pb-4">
-                                        <button
-                                            onClick={() => handleLintFile(file)}
-                                            disabled={state.lintingStatus === 'linting'}
-                                            className="flex items-center gap-2 text-sm bg-gray-700 text-white font-semibold rounded-md px-3 py-1.5 hover:bg-gray-600 transition-colors duration-200 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed"
-                                            title="Automatically fix formatting and style issues"
-                                        >
-                                            {state.lintingStatus === 'linting' ? 
-                                                <Spinner className="w-4 h-4" /> : 
-                                                <WandIcon className="w-4 h-4" />
-                                            }
-                                            <span>{state.lintingStatus === 'linting' ? 'Formatting...' : 'Auto-Fix & Format'}</span>
-                                        </button>
-                                    </div>
-                                )}
-                                
-                                <ReviewComments state={state} containerRef={commentsRef} />
-                            </div>
+        {/* Main Content */}
+        <main ref={mainPanelRef} className="flex-grow bg-gray-800/50 rounded-lg border border-gray-700 flex flex-col">
+           {activeFile && activeFileState ? (
+                <>
+                    <div className="p-4 border-b border-gray-700 flex-shrink-0 flex justify-between items-center">
+                        <h3 className="font-mono text-lg truncate text-gray-200" title={activeFile.path}>{activeFile.path}</h3>
+                        {activeFileState.status === 'complete' && activeFileState.result && (
+                             <button
+                                onClick={() => handleLintFile(activeFile)}
+                                disabled={activeFileState.lintingStatus === 'linting'}
+                                className="flex items-center gap-2 text-sm bg-gray-700 text-white font-semibold rounded-md px-3 py-1.5 hover:bg-gray-600 transition-colors duration-200 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed"
+                                title="Automatically fix formatting and style issues"
+                            >
+                                {activeFileState.lintingStatus === 'linting' ? <Spinner className="w-4 h-4" /> : <WandIcon className="w-4 h-4" />}
+                                <span>{activeFileState.lintingStatus === 'linting' ? 'Formatting...' : 'Auto-Fix & Format'}</span>
+                            </button>
                         )}
                     </div>
-                )}
-            </div>
-          )
-        })}
+                    
+                    {activeFileState.status === 'error' && (
+                        <div className="p-4 m-4 bg-red-900/50 border border-red-700 text-red-300 rounded-lg">{activeFileState.error}</div>
+                    )}
+                    
+                    {activeFileState.status !== 'error' && (
+                         <div className="flex flex-grow min-h-0 gap-4 p-4">
+                            <div className="w-2/5 flex flex-col">
+                                <ReviewComments state={activeFileState} containerRef={commentsRef} />
+                            </div>
+                            <div className="w-3/5 flex flex-col">
+                                <DiffViewer 
+                                  originalCode={activeFile.content} 
+                                  correctedCode={activeFileState.result?.correctedCode ?? activeFile.content} 
+                                  highlightedLines={highlightedLines} 
+                                />
+                            </div>
+                         </div>
+                    )}
+                </>
+           ) : (
+                <div className="flex items-center justify-center h-full text-gray-500">
+                    <p>Select a file to view its review.</p>
+                </div>
+           )}
+        </main>
       </div>
     </div>
   );
