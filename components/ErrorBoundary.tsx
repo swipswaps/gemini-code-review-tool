@@ -1,3 +1,6 @@
+
+
+
 import React, { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangleIcon } from './icons/AlertTriangleIcon';
 
@@ -12,21 +15,21 @@ interface State {
 }
 
 export class ErrorBoundary extends Component<Props, State> {
-  public state: State = {
+  state: State = {
     hasError: false,
     error: null,
   };
 
-  public static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): State {
     return { hasError: true, error };
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("Uncaught error:", error, errorInfo);
   }
   
-  // FIX: Changed from private to public to ensure accessibility from JSX.
-  public handleReset = () => {
+  // FIX: Using an arrow function binds `this` to the component instance, fixing context issues.
+  handleReset = () => {
     if (this.props.onReset) {
       this.props.onReset();
       this.setState({ hasError: false, error: null });
@@ -36,7 +39,7 @@ export class ErrorBoundary extends Component<Props, State> {
     }
   };
 
-  public render() {
+  render() {
     if (this.state.hasError) {
       return (
         <div className="bg-red-900/50 border border-red-700 text-red-300 p-6 rounded-lg flex flex-col items-center justify-center text-center h-full">

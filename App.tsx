@@ -1,3 +1,5 @@
+
+
 import React, { useReducer, useCallback, useEffect } from 'react';
 import type { RepoTreeNode, HolisticAnalysisResult, RepoFileWithContent, RepoTreeFolder, RepoAnalysisStreamEvent } from './types';
 import { fetchRepoRoot, fetchFolderContents, fetchAllFileContents, fetchFileContent, parseGitHubUrl } from './services/githubService';
@@ -21,6 +23,7 @@ type AppState = {
   holisticAnalysisResult: HolisticAnalysisResult | null;
   allFilesWithContent: RepoFileWithContent[] | null;
   repoAnalysisStatusText: string;
+  logs: string[];
   error: string | null;
 };
 
@@ -42,6 +45,8 @@ type AppAction =
   | { type: 'REPO_ANALYSIS_DATA_CHUNK'; payload: HolisticAnalysisResult }
   | { type: 'REPO_ANALYSIS_COMPLETE'; payload: { files: RepoFileWithContent[] } }
   | { type: 'REPO_ANALYSIS_FAILURE'; payload: string }
+  | { type: 'ADD_LOG'; payload: string }
+  | { type: 'CLEAR_LOGS' }
   | { type: 'RESET' };
 
 const initialState: AppState = {
@@ -54,6 +59,7 @@ const initialState: AppState = {
   holisticAnalysisResult: null,
   allFilesWithContent: null,
   repoAnalysisStatusText: '',
+  logs: [],
   error: null,
 };
 
@@ -74,7 +80,7 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     case 'SET_GITHUB_TOKEN':
       return { ...state, githubToken: action.payload };
     case 'FETCH_REPO_START':
-      return { ...initialState, repoUrl: state.repoUrl, githubToken: state.githubToken, status: 'loading_repo' };
+      return { ...initialState, repoUrl: state.repoUrl, githubToken: state.githubToken, status: 'loading_repo', logs: [] };
     case 'FETCH_REPO_SUCCESS':
       return { ...state, status: 'repo_loaded', repoTree: action.payload, error: action.payload.length === 0 ? 'No files found in this repository.' : null };
     case 'FETCH_REPO_FAILURE':
@@ -118,7 +124,7 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
     case 'FILE_REVIEW_FAILURE':
       return { ...state, status: 'error', error: action.payload };
     case 'START_REPO_ANALYSIS':
-      return { ...state, status: 'analyzing_repo', holisticAnalysisResult: {}, error: null, repoAnalysisStatusText: '' };
+      return { ...state, status: 'analyzing_repo', holisticAnalysisResult: {}, error: null, repoAnalysisStatusText: '', logs: ['[SYSTEM] Starting repository analysis...'] };
     case 'REPO_ANALYSIS_STATUS_UPDATE':
       return { ...state, repoAnalysisStatusText: action.payload };
     case 'REPO_ANALYSIS_DATA_CHUNK':
@@ -127,8 +133,14 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
       return { ...state, status: 'repo_loaded', allFilesWithContent: action.payload.files };
     case 'REPO_ANALYSIS_FAILURE':
       return { ...state, status: 'repo_loaded', error: action.payload, holisticAnalysisResult: state.holisticAnalysisResult }; // Keep partial results on failure
+    case 'ADD_LOG':
+        // Keep the last 200 logs to prevent memory issues
+        const nextLogs = [...state.logs, action.payload].slice(-200);
+        return { ...state, logs: nextLogs };
+    case 'CLEAR_LOGS':
+        return { ...state, logs: [] };
     case 'RESET':
-        return { ...initialState, repoUrl: state.repoUrl, githubToken: state.githubToken };
+        return { ...initialState, repoUrl: state.repoUrl, githubToken: state.githubToken, logs: [] };
     default:
       return state;
   }
@@ -136,7 +148,7 @@ const appReducer = (state: AppState, action: AppAction): AppState => {
 
 export default function App(): React.ReactElement {
   const [state, dispatch] = useReducer(appReducer, initialState);
-  const { status, repoUrl, githubToken, repoTree, selectedFilePaths, filesForReview, holisticAnalysisResult, allFilesWithContent, repoAnalysisStatusText, error } = state;
+  const { status, repoUrl, githubToken, repoTree, selectedFilePaths, filesForReview, holisticAnalysisResult, allFilesWithContent, repoAnalysisStatusText, logs, error } = state;
 
   const handleFetchFiles = useCallback(async (urlToFetch: string) => {
     if (!parseGitHubUrl(urlToFetch)) {
@@ -149,7 +161,8 @@ export default function App(): React.ReactElement {
       const fetchedTree = await fetchRepoRoot(urlToFetch, githubToken);
       dispatch({ type: 'FETCH_REPO_SUCCESS', payload: fetchedTree });
     } catch (err) {
-      dispatch({ type: 'FETCH_REPO_FAILURE', payload: err instanceof Error ? err.message : 'An unknown error occurred.' });
+      const message = err instanceof Error ? err.message : 'An unknown error occurred.';
+      dispatch({ type: 'FETCH_REPO_FAILURE', payload: message });
     }
   }, [githubToken]);
 
@@ -201,7 +214,9 @@ export default function App(): React.ReactElement {
       });
       dispatch({ type: 'FILE_REVIEW_SUCCESS', payload: filesToReview });
     } catch (err) {
-      dispatch({ type: 'FILE_REVIEW_FAILURE', payload: err instanceof Error ? err.message : 'An unknown error occurred while fetching files.' });
+      // Fix: Ensure the error object is handled correctly and a string message is dispatched.
+      const message = err instanceof Error ? err.message : 'An unknown error occurred while fetching files.';
+      dispatch({ type: 'FILE_REVIEW_FAILURE', payload: message });
     }
   }, [repoUrl, selectedFilePaths, githubToken]);
 
@@ -218,7 +233,7 @@ export default function App(): React.ReactElement {
     let fetchedContents: RepoFileWithContent[] = [];
     try {
       const onFetchProgress = (message: string) => {
-        dispatch({ type: 'REPO_ANALYSIS_STATUS_UPDATE', payload: message });
+        dispatch({ type: 'ADD_LOG', payload: message });
       };
       
       fetchedContents = await fetchAllFileContents(owner, repo, repoTree, githubToken, onFetchProgress);
@@ -227,6 +242,7 @@ export default function App(): React.ReactElement {
       for await (const event of stream) {
         if (event.type === 'status') {
           dispatch({ type: 'REPO_ANALYSIS_STATUS_UPDATE', payload: event.message });
+          dispatch({ type: 'ADD_LOG', payload: `[ANALYSIS] ${event.message}` });
         } else if (event.type === 'data') {
           dispatch({ type: 'REPO_ANALYSIS_DATA_CHUNK', payload: event.payload });
         }
@@ -234,7 +250,9 @@ export default function App(): React.ReactElement {
       dispatch({ type: 'REPO_ANALYSIS_COMPLETE', payload: { files: fetchedContents } });
 
     } catch (err) {
-      dispatch({ type: 'REPO_ANALYSIS_FAILURE', payload: err instanceof Error ? err.message : 'An unknown error occurred.' });
+      const message = err instanceof Error ? err.message : 'An unknown error occurred.';
+      dispatch({ type: 'ADD_LOG', payload: `[ERROR] ${message}` });
+      dispatch({ type: 'REPO_ANALYSIS_FAILURE', payload: message });
     }
   }, [repoTree, repoUrl, githubToken]);
 
@@ -258,6 +276,7 @@ export default function App(): React.ReactElement {
               originalFiles={allFilesWithContent}
               isLoading={status === 'analyzing_repo'}
               statusText={repoAnalysisStatusText}
+              logs={logs}
               onReset={() => dispatch({ type: 'RESET' })}
           />
         </ErrorBoundary>
@@ -322,7 +341,7 @@ export default function App(): React.ReactElement {
                             disabled={status === 'analyzing_repo'}
                             className="w-full bg-indigo-600 text-white font-semibold rounded-md px-4 py-2 hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors duration-200 flex items-center justify-center"
                         >
-                            {status === 'analyzing_repo' ? <><Spinner className="w-5 h-5 mr-2"/><span>{repoAnalysisStatusText || 'Analyzing...'}</span></> : 'Analyze Entire Repository'}
+                            {status === 'analyzing_repo' ? <><Spinner className="w-5 h-5 mr-2"/><span>Analyzing...</span></> : 'Analyze Entire Repository'}
                         </button>
                     </div>
                     <FileBrowser 

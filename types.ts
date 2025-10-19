@@ -2,6 +2,7 @@ export interface RepoTreeFile {
   type: 'file';
   path: string;
   name: string;
+  size: number;
 }
 
 export interface RepoTreeFolder {

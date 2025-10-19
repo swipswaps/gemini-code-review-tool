@@ -1,3 +1,4 @@
+
 import type { RepoTreeNode, RepoTreeFolder, RepoTreeFile } from '../types';
 
 const API_BASE = 'https://api.github.com';
@@ -84,6 +85,7 @@ export const fetchFolderContents = async (owner: string, repo: string, path: str
                 type: 'file',
                 path: item.path,
                 name: item.name,
+                size: item.size,
             } as RepoTreeFile;
         }
     });
@@ -142,25 +144,35 @@ export const fetchAllFileContents = async (
   onProgress?: (message: string) => void
 ): Promise<{ path: string; content: string }[]> => {
   
-  const allFiles: { path: string, content: string }[] = [];
+  const allFiles: { path: string; content: string }[] = [];
   const foldersToFetch: RepoTreeNode[] = [...initialTree];
   let fetchedPaths = new Set<string>();
 
   while(foldersToFetch.length > 0) {
+      // Unconditionally yield to the event loop on each iteration. This prevents the UI from
+      // freezing when processing a large number of files synchronously (e.g., skipping empty files).
+      await new Promise(resolve => setTimeout(resolve, 0));
+
       const node = foldersToFetch.pop()!;
       if (fetchedPaths.has(node.path)) continue;
       fetchedPaths.add(node.path);
 
       if (node.type === 'file') {
-          onProgress?.(`Fetching file ${allFiles.length + 1}/100: ${node.path}`);
-          try {
-              const content = await fetchFileContent(owner, repo, node.path, token);
-              allFiles.push({ path: node.path, content });
-          } catch(e) {
-              const errorMessage = e instanceof Error ? e.message : 'Unknown error';
-              onProgress?.(`ERROR fetching ${node.path}: ${errorMessage}`);
-              console.error(`Skipping file ${node.path} due to fetch error:`, e);
-              allFiles.push({ path: node.path, content: `// Error fetching content: ${errorMessage}` });
+          // The node from the tree now includes size, so we can skip fetching empty files.
+          if ((node as RepoTreeFile).size === 0) {
+              onProgress?.(`Skipping empty file: ${node.path}`);
+              allFiles.push({ path: node.path, content: '' });
+          } else {
+              onProgress?.(`Fetching file ${allFiles.length + 1}/100: ${node.path}`);
+              try {
+                  const content = await fetchFileContent(owner, repo, node.path, token);
+                  allFiles.push({ path: node.path, content });
+              } catch(e) {
+                  const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+                  onProgress?.(`ERROR fetching ${node.path}: ${errorMessage}`);
+                  console.error(`Skipping file ${node.path} due to fetch error:`, e);
+                  allFiles.push({ path: node.path, content: `// Error fetching content: ${errorMessage}` });
+              }
           }
       } else if (node.type === 'folder') {
           onProgress?.(`Scanning directory: ${node.path || '/'}`);

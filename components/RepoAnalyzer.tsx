@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useCallback } from 'react';
 import { marked } from 'marked';
 import type { HolisticAnalysisResult, RepoFileWithContent } from '../types';
@@ -8,6 +9,7 @@ import { AlertTriangleIcon } from './icons/AlertTriangleIcon';
 import { ChevronIcon } from './icons/ChevronIcon';
 import { DownloadIcon } from './icons/DownloadIcon';
 import { parseGitHubUrl } from '../services/githubService';
+import { LogViewer } from './LogViewer';
 
 interface RepoAnalyzerProps {
   repoUrl: string;
@@ -15,6 +17,7 @@ interface RepoAnalyzerProps {
   originalFiles: RepoFileWithContent[] | null;
   isLoading: boolean;
   statusText: string;
+  logs: string[];
   onReset: () => void;
 }
 
@@ -36,7 +39,7 @@ const CollapsibleSection: React.FC<{ title: string; children: React.ReactNode; c
     );
 };
 
-export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisResult, originalFiles, isLoading, statusText, onReset }) => {
+export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisResult, originalFiles, isLoading, statusText, logs, onReset }) => {
   const [openFixPath, setOpenFixPath] = useState<string | null>(null);
 
   const originalFilesMap = useMemo(() => {
@@ -103,10 +106,17 @@ export const RepoAnalyzer: React.FC<RepoAnalyzerProps> = ({ repoUrl, analysisRes
 
 
   const renderLoading = () => (
-      <div className="flex flex-col items-center justify-center h-full bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-700 p-8 text-gray-500">
-        <Spinner className="h-12 w-12 mb-4" />
-        <h2 className="text-xl font-semibold text-gray-300">Analysis in Progress</h2>
-        <p className="text-center">{statusText}</p>
+      <div className="flex flex-col h-full bg-gray-800/50 rounded-lg border border-gray-700 p-4 space-y-4">
+        <div className="flex items-center flex-shrink-0">
+            <Spinner className="h-10 w-10 mr-4" />
+            <div>
+                <h2 className="text-xl font-semibold text-gray-200">Analysis in Progress</h2>
+                <p className="text-sm text-purple-400">{statusText || 'Please wait...'}</p>
+            </div>
+        </div>
+        <div className="w-full flex-grow min-h-0">
+            <LogViewer logs={logs} />
+        </div>
       </div>
   );
 

@@ -1,3 +1,6 @@
+
+
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReviewState, RepoFileWithContent } from '../types';
 import { reviewCodeStream, lintCode } from '../services/geminiService';
@@ -37,10 +40,9 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
         setReviewStates(prev => {
             const newStates = new Map(prev);
             const currentState = newStates.get(file.path);
-            // FIX: Explicitly check for currentState before spreading to prevent type errors.
-            if (currentState) {
-                newStates.set(file.path, { ...currentState, status: 'streaming', streamedComments: fullResponse });
-            }
+            // FIX: Guard against undefined currentState before spreading.
+            if (!currentState) return newStates;
+            newStates.set(file.path, { ...currentState, status: 'streaming', streamedComments: fullResponse });
             return newStates;
         });
       }
@@ -66,10 +68,9 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
       setReviewStates(prev => {
           const newStates = new Map(prev);
           const currentState = newStates.get(file.path);
-          // FIX: Explicitly check for currentState before spreading to prevent type errors.
-          if (currentState) {
-              newStates.set(file.path, { ...currentState, status: 'error', error: errorMessage });
-          }
+          // FIX: Guard against undefined currentState before spreading.
+          if (!currentState) return newStates;
+          newStates.set(file.path, { ...currentState, status: 'error', error: errorMessage });
           return newStates;
       });
     }
@@ -79,10 +80,9 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
         setReviewStates(prev => {
             const newStates = new Map(prev);
             const currentState = newStates.get(file.path);
-            // FIX: Explicitly check for currentState before spreading to prevent type errors.
-            if (currentState) {
-                newStates.set(file.path, { ...currentState, lintingStatus: 'linting' });
-            }
+            // FIX: Guard against undefined currentState before spreading.
+            if (!currentState) return newStates;
+            newStates.set(file.path, { ...currentState, lintingStatus: 'linting' });
             return newStates;
         });
 
@@ -92,15 +92,14 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
             setReviewStates(prev => {
                 const newStates = new Map(prev);
                 const currentState = newStates.get(file.path);
-                // FIX: Explicitly check for currentState and currentState.result before spreading to prevent type errors.
-                if (currentState && currentState.result) {
-                    const newResult = { ...currentState.result, correctedCode: lintedCode };
-                    newStates.set(file.path, {
-                        ...currentState,
-                        result: newResult,
-                        lintingStatus: 'complete',
-                    });
-                }
+                // FIX: Guard against undefined currentState and null result before spreading.
+                if (!currentState || !currentState.result) return newStates;
+                const newResult = { ...currentState.result, correctedCode: lintedCode };
+                newStates.set(file.path, {
+                    ...currentState,
+                    result: newResult,
+                    lintingStatus: 'complete',
+                });
                 return newStates;
             });
 
@@ -109,10 +108,9 @@ export const CodeReviewer: React.FC<CodeReviewerProps> = ({ files, onReset }) =>
             setReviewStates(prev => {
                 const newStates = new Map(prev);
                 const currentState = newStates.get(file.path);
-                // FIX: Explicitly check for currentState before spreading to prevent type errors.
-                if (currentState) {
-                    newStates.set(file.path, { ...currentState, lintingStatus: 'error' });
-                }
+                // FIX: Guard against undefined currentState before spreading.
+                if (!currentState) return newStates;
+                newStates.set(file.path, { ...currentState, lintingStatus: 'error' });
                 return newStates;
             });
         }
