@@ -1,4 +1,3 @@
-
 import express from 'express';
 import cors from 'cors';
 import 'dotenv/config';
@@ -9,6 +8,7 @@ const port = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
+// We will handle JSON parsing manually for the streaming analysis endpoint
 app.use(express.json({ limit: '50mb' }));
 
 // Check for API Key
@@ -61,6 +61,7 @@ const sendEvent = (res, event) => {
 
 // --- API Endpoints ---
 
+// This endpoint remains the same as it handles smaller, non-streaming requests.
 app.post('/api/review', async (req, res) => {
   const { code, fileName } = req.body;
   if (!code || !fileName) return res.status(400).send('Missing code or fileName.');
@@ -89,6 +90,7 @@ app.post('/api/review', async (req, res) => {
   }
 });
 
+// This endpoint remains the same as it handles smaller, non-streaming requests.
 app.post('/api/lint', async (req, res) => {
     const { code, fileName } = req.body;
     if (!code || !fileName) return res.status(400).send('Missing code or fileName.');
@@ -125,61 +127,80 @@ const performStreamingTask = async (res, taskId, taskTitle, prompt) => {
     }
 };
 
-app.post('/api/analyze', async (req, res) => {
-    const { repoUrl, paths, githubToken } = req.body;
-    if (!repoUrl || !paths || !Array.isArray(paths)) {
-        return res.status(400).send('Missing repoUrl or paths in request body.');
-    }
-    
+const analyzeRepoRequestHandler = async (req, res) => {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     
-    try {
-        sendEvent(res, { type: 'system', message: 'Backend connection established.' });
-        
-        const parsedRepo = parseGitHubUrl(repoUrl);
-        if (!parsedRepo) throw new Error("Invalid GitHub URL provided.");
-        const { owner, repo } = parsedRepo;
+    // CRITICAL FIX: Send connection message IMMEDIATELY, before processing the request body.
+    sendEvent(res, { type: 'system', message: 'Backend connection established. Receiving file list...' });
 
-        let fileContentsString = '';
-        sendEvent(res, { type: 'system', message: 'Fetching repository files from GitHub...' });
-        
-        for (const path of paths) {
-            let content = '';
-            try {
-                content = await fetchFileContent(owner, repo, path, githubToken);
-                 // Send the content back to the client for the snippet UI
-                sendEvent(res, { type: 'processing_file', path: path, content: content });
-            } catch (fetchError) {
-                console.warn(`Could not fetch ${path}:`, fetchError.message);
-                content = `// Error fetching content: ${fetchError.message}`;
-                sendEvent(res, { type: 'processing_file', path: path, content: content });
+    let body = '';
+    req.on('data', chunk => {
+        body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+        try {
+            const { repoUrl, paths, githubToken } = JSON.parse(body);
+            if (!repoUrl || !paths || !Array.isArray(paths)) {
+                throw new Error('Missing repoUrl or paths in request body.');
             }
-            fileContentsString += `// FILE: ${path}\n${content}\n\n---\n\n`;
-            await new Promise(resolve => setTimeout(resolve, 10)); // Yield with a small delay
-        }
-        
-        sendEvent(res, { type: 'system', message: 'All files processed. Starting analysis tasks.' });
-        
-        const tasks = [
-            { id: 'summary', title: '1. Project Summary', prompt: `Provide a concise, one-paragraph summary of this project's purpose based on its file structure and code. Codebase:\n${fileContentsString}` },
-            { id: 'tech_stack', title: '2. Tech Stack Analysis', prompt: `Analyze the tech stack. Identify the primary languages, frameworks, and key libraries. Present as a markdown list. Codebase:\n${fileContentsString}` },
-            { id: 'architecture', title: '3. Architectural Review', prompt: `Critique the overall architecture. Discuss strengths, weaknesses, and potential improvements in markdown format. Codebase:\n${fileContentsString}` },
-            { id: 'error_trends', title: '4. Common Error Trends', prompt: `Identify up to 3 recurring problems or anti-patterns. For each, describe the trend and list affected files. Codebase:\n${fileContentsString}` },
-            { id: 'suggestions', title: '5. Actionable Suggestions', prompt: `List up to 5 specific, actionable improvements for this codebase. Codebase:\n${fileContentsString}` },
-        ];
-        
-        for (const task of tasks) {
-            await performStreamingTask(res, task.id, task.title, task.prompt);
-        }
+            sendEvent(res, { type: 'system', message: `Received ${paths.length} file paths. Starting processing.` });
+            
+            const parsedRepo = parseGitHubUrl(repoUrl);
+            if (!parsedRepo) throw new Error("Invalid GitHub URL provided.");
+            const { owner, repo } = parsedRepo;
 
-    } catch (error) {
-        console.error("Analysis process terminated due to an error:", error);
-        const errorMessage = error instanceof Error ? error.message : 'An unknown server error occurred';
-        sendEvent(res, { type: 'error', message: `A fatal error occurred: ${errorMessage}` });
-    } finally {
+            let fileContentsString = '';
+            sendEvent(res, { type: 'system', message: 'Fetching repository files from GitHub...' });
+            
+            for (const path of paths) {
+                let content = '';
+                try {
+                    content = await fetchFileContent(owner, repo, path, githubToken);
+                    sendEvent(res, { type: 'processing_file', path: path, content: content });
+                } catch (fetchError) {
+                    console.warn(`Could not fetch ${path}:`, fetchError.message);
+                    content = `// Error fetching content: ${fetchError.message}`;
+                    sendEvent(res, { type: 'processing_file', path: path, content: content });
+                }
+                fileContentsString += `// FILE: ${path}\n${content}\n\n---\n\n`;
+                await new Promise(resolve => setTimeout(resolve, 10)); 
+            }
+            
+            sendEvent(res, { type: 'system', message: 'All files processed. Starting analysis tasks.' });
+            
+            const tasks = [
+                { id: 'summary', title: '1. Project Summary', prompt: `Provide a concise, one-paragraph summary of this project's purpose based on its file structure and code. Codebase:\n${fileContentsString}` },
+                { id: 'tech_stack', title: '2. Tech Stack Analysis', prompt: `Analyze the tech stack. Identify the primary languages, frameworks, and key libraries. Present as a markdown list. Codebase:\n${fileContentsString}` },
+                { id: 'architecture', title: '3. Architectural Review', prompt: `Critique the overall architecture. Discuss strengths, weaknesses, and potential improvements in markdown format. Codebase:\n${fileContentsString}` },
+                { id: 'error_trends', title: '4. Common Error Trends', prompt: `Identify up to 3 recurring problems or anti-patterns. For each, describe the trend and list affected files. Codebase:\n${fileContentsString}` },
+                { id: 'suggestions', title: '5. Actionable Suggestions', prompt: `List up to 5 specific, actionable improvements for this codebase. Codebase:\n${fileContentsString}` },
+            ];
+            
+            for (const task of tasks) {
+                await performStreamingTask(res, task.id, task.title, task.prompt);
+            }
+
+        } catch (error) {
+            console.error("Analysis process terminated due to an error:", error);
+            const errorMessage = error instanceof Error ? error.message : 'An unknown server error occurred';
+            sendEvent(res, { type: 'error', message: `A fatal error occurred: ${errorMessage}` });
+        } finally {
+            if (!res.writableEnded) res.end();
+        }
+    });
+
+    req.on('error', (err) => {
+        console.error('Request stream error:', err);
+        sendEvent(res, { type: 'error', message: `A fatal error occurred during request: ${err.message}` });
         if (!res.writableEnded) res.end();
-    }
-});
+    });
+};
+
+// CRITICAL FIX: We remove the blocking express.json() middleware from this specific route
+// and use our custom handler that establishes a stream immediately.
+app.post('/api/analyze', analyzeRepoRequestHandler);
+
 
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
